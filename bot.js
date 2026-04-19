@@ -1,27 +1,3 @@
-/**
- * ============================================================
- *  bot.js — IPS Salud Vida · WhatsApp Bot
- *
- *  Responsabilidad única: conversar con el paciente por
- *  WhatsApp y delegar toda la lógica de negocio al backend.
- *
- *  Lo que hace este archivo:
- *    • Gestionar el flujo de conversación (sesión en Redis)
- *    • Enviar mensajes y menús interactivos a Meta
- *    • Llamar al backend para slots y para crear citas
- *    • Ceder el control cuando el chat está en MANUAL
- *
- *  Lo que NO hace (lo maneja el backend):
- *    • Métricas y contadores de conversaciones
- *    • Lógica de asesores (cola, handoff, comandos #fin/#info)
- *    • Persistencia de citas en PostgreSQL
- *    • Procesamiento de documentos con IA
- *    • Instancia propia de Redis (usa la del backend)
- *
- *  Dependencias: axios  |  Variables requeridas: .env
- * ============================================================
- */
-
 "use strict";
 
 const axios = require("axios");
