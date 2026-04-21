@@ -1,16 +1,7 @@
 /**
  * ============================================================
  *  bot.js — IPS Salud Vida · WhatsApp Bot
- *  v2.0 — Mejoras: consulta/cancelación de citas, UX y errores
- * ============================================================
- *
- *  Flujos disponibles:
- *    • Agendar cita     → especialidad → EPS → doc → nombre → sede → slot → confirmación
- *    • Mis citas        → ver citas recientes → opción a cancelar
- *    • Cancelar cita    → selección → confirmación → cancelación
- *    • Horarios         → info por sede
- *    • Sedes            → detalle de cada sede
- *    • Hablar con asesor → handoff manual
+ *  v2.1 — Sedes reales + consulta/cancelación de citas + UX
  * ============================================================
  */
 
@@ -38,9 +29,7 @@ const WA_HEADERS = {
 
 const API_BASE          = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 const BOT_SERVICE_TOKEN = process.env.BOT_SERVICE_TOKEN || process.env.JWT_SECRET;
-
-// Timeout para llamadas al backend (ms)
-const API_TIMEOUT = 8000;
+const API_TIMEOUT       = 8000;
 
 /* ============================================================
    SECCIÓN 1 · ENVÍO DE MENSAJES
@@ -108,7 +97,6 @@ const apiHeaders = () => ({
   "Content-Type": "application/json",
 });
 
-/** Consulta slots disponibles al motor de calendario SQL. */
 async function obtenerSlots(sedeSlug, especialidad) {
   const fecha = new Date();
   fecha.setDate(fecha.getDate() + 1);
@@ -120,7 +108,6 @@ async function obtenerSlots(sedeSlug, especialidad) {
   return data.slots || [];
 }
 
-/** Crea la cita en PostgreSQL con protección anti-colisión. */
 async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
   const { data } = await axios.post(
     `${API_BASE}/api/calendar/appointments`,
@@ -130,7 +117,6 @@ async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
   return data.cita;
 }
 
-/** Busca el paciente por phone para obtener su ID de BD. */
 async function obtenerPaciente(phone) {
   try {
     const { data } = await axios.get(`${API_BASE}/api/patients/by-phone/${phone}`, {
@@ -143,7 +129,6 @@ async function obtenerPaciente(phone) {
   }
 }
 
-/** Obtiene las citas recientes del paciente (máx 8). */
 async function obtenerCitasPaciente(pacienteId) {
   try {
     const { data } = await axios.get(`${API_BASE}/api/calendar/appointments/${pacienteId}`, {
@@ -157,7 +142,6 @@ async function obtenerCitasPaciente(pacienteId) {
   }
 }
 
-/** Cancela una cita específica por ID. */
 async function cancelarCitaAPI(citaId) {
   await axios.patch(
     `${API_BASE}/api/calendar/appointments/${citaId}/status`,
@@ -167,7 +151,78 @@ async function cancelarCitaAPI(citaId) {
 }
 
 /* ============================================================
-   SECCIÓN 3 · UTILIDADES DE FORMATO
+   SECCIÓN 3 · CONSTANTES DE SEDES
+   ============================================================ */
+
+// Nombre visible → slug de BD
+const SEDE_SLUG = {
+  "Montería":       "sede-monteria",
+  "Tierralta":      "sede-tierralta",
+  "Ciénaga de Oro": "sede-cdo",
+  "Cereté":         "sede-cerete",
+  "San Carlos":     "sede-san-carlos",
+  "Valencia":       "sede-valencia",
+};
+
+// ID de botón / lista → nombre visible
+const SEDES_MAP = {
+  sede_cita_monteria:   "Montería",
+  sede_cita_tierralta:  "Tierralta",
+  sede_cita_cdo:        "Ciénaga de Oro",
+  sede_cita_cerete:     "Cereté",
+  sede_cita_sancarlos:  "San Carlos",
+  sede_cita_valencia:   "Valencia",
+};
+
+// Información pública de cada sede (horarios reales del Excel)
+// NOTA: actualiza dir y tel con los datos reales antes de producción.
+const SEDES_INFO = {
+  sede_monteria: {
+    nombre:  "Montería",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Lun–Vie: 11:00–11:30 (mañana) · 17:00–17:30 (tarde)",
+    nota:    "Atención de lunes a viernes en dos jornadas.",
+  },
+  sede_tierralta: {
+    nombre:  "Tierralta",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Lun/Mié/Vie: 16:40–17:10 · Mar/Jue: 11:00–11:30 y 16:40–17:10",
+    nota:    "Martes y jueves tienen jornada mañana y tarde.",
+  },
+  sede_cdo: {
+    nombre:  "Ciénaga de Oro",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Lun–Vie: 11:00–11:20 (mañana) · 16:50–17:00 (tarde)",
+    nota:    "Atención de lunes a viernes.",
+  },
+  sede_cerete: {
+    nombre:  "Cereté",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Lun/Mié/Vie: 11:00–11:30 · Mar/Jue: 13:30, 14:30, 15:30",
+    nota:    "Martes y jueves con atención solo en tarde.",
+  },
+  sede_sancarlos: {
+    nombre:  "San Carlos",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Martes y Jueves: 07:40, 08:30, 09:20, 10:00",
+    nota:    "Atención solo martes y jueves en la mañana.",
+  },
+  sede_valencia: {
+    nombre:  "Valencia",
+    dir:     "Dirección — actualizar",
+    tel:     "PENDIENTE",
+    horario: "Lun/Mié/Vie: 10:40, 10:50, 11:00",
+    nota:    "Atención lunes, miércoles y viernes.",
+  },
+};
+
+/* ============================================================
+   SECCIÓN 4 · UTILIDADES
    ============================================================ */
 
 const ESTADO_LABEL = {
@@ -186,23 +241,20 @@ const ESP_CORTA = {
   "Especialistas":    "Especialista",
 };
 
-/** Formatea una fecha ISO a texto legible en español. */
 function fmtFecha(iso) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString("es-CO", {
+  return new Date(iso).toLocaleString("es-CO", {
     weekday: "short", day: "numeric", month: "short",
     hour: "2-digit", minute: "2-digit",
   });
 }
 
-/** Formatea hora corta HH:MM desde ISO. */
 function fmtHora(iso) {
   return new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
 }
 
 /* ============================================================
-   SECCIÓN 4 · MENÚS REUTILIZABLES
+   SECCIÓN 5 · MENÚS
    ============================================================ */
 
 async function menuPrincipal(to) {
@@ -219,7 +271,7 @@ async function menuPrincipal(to) {
   await sendButtons(to, {
     body:    "Más opciones:",
     buttons: [
-      { id: "menu_sedes",  title: "📍 Sedes"            },
+      { id: "menu_sedes",  title: "📍 Sedes"              },
       { id: "menu_asesor", title: "👨‍💼 Hablar con asesor" },
     ],
   });
@@ -258,52 +310,62 @@ async function menuEPS(to, especialidad) {
   });
 }
 
+// Lista de sedes para seleccionar en el agendamiento
 async function menuSedesCita(to) {
-  await sendButtons(to, {
-    header:  "📍 ¿En qué sede prefieres tu cita?",
-    body:    "Selecciona la sede:",
-    footer:  "IPS Salud Vida",
-    buttons: [
-      { id: "sede_cita_centro", title: "🏢 Sede Centro" },
-      { id: "sede_cita_norte",  title: "🏢 Sede Norte"  },
-      { id: "sede_cita_sur",    title: "🏢 Sede Sur"    },
-    ],
+  await sendList(to, {
+    header:      "📍 ¿En qué sede prefieres tu cita?",
+    body:        "Selecciona la sede:",
+    footer:      "IPS Salud Vida",
+    buttonLabel: "Ver sedes",
+    sections: [{
+      title: "Sedes disponibles",
+      rows: [
+        { id: "sede_cita_monteria",  title: "🏢 Montería",       description: "Lun–Vie mañana y tarde"    },
+        { id: "sede_cita_tierralta", title: "🏢 Tierralta",      description: "Lun–Vie mañana/tarde"      },
+        { id: "sede_cita_cdo",       title: "🏢 Ciénaga de Oro", description: "Lun–Vie mañana y tarde"    },
+        { id: "sede_cita_cerete",    title: "🏢 Cereté",         description: "Lun–Vie mañana/tarde"      },
+        { id: "sede_cita_sancarlos", title: "🏢 San Carlos",     description: "Solo mar y jue"            },
+        { id: "sede_cita_valencia",  title: "🏢 Valencia",       description: "Lun, mié y vie"            },
+      ],
+    }],
   });
 }
 
+// Lista de sedes para consultar info
 async function menuSedes(to) {
-  await sendButtons(to, {
-    header:  "📍 Nuestras Sedes",
-    body:    "¿Qué sede deseas consultar?",
-    buttons: [
-      { id: "sede_centro", title: "🏢 Sede Centro" },
-      { id: "sede_norte",  title: "🏢 Sede Norte"  },
-      { id: "sede_sur",    title: "🏢 Sede Sur"    },
-    ],
+  await sendList(to, {
+    header:      "📍 Nuestras Sedes",
+    body:        "¿Qué sede deseas consultar?",
+    footer:      "IPS Salud Vida",
+    buttonLabel: "Ver sedes",
+    sections: [{
+      title: "Sedes",
+      rows: [
+        { id: "sede_monteria",  title: "🏢 Montería"        },
+        { id: "sede_tierralta", title: "🏢 Tierralta"       },
+        { id: "sede_cdo",       title: "🏢 Ciénaga de Oro"  },
+        { id: "sede_cerete",    title: "🏢 Cereté"          },
+        { id: "sede_sancarlos", title: "🏢 San Carlos"      },
+        { id: "sede_valencia",  title: "🏢 Valencia"        },
+      ],
+    }],
   });
 }
 
-/** Muestra botones de acción post-consulta de citas. */
 async function menuPostCitas(to) {
   await sendButtons(to, {
     body:    "¿Qué deseas hacer?",
     buttons: [
-      { id: "menu_cita",      title: "📅 Agendar cita"    },
+      { id: "menu_cita",      title: "📅 Agendar cita"     },
       { id: "citas_cancelar", title: "❌ Cancelar una cita" },
-      { id: "menu_principal", title: "🏠 Menú principal"  },
+      { id: "menu_principal", title: "🏠 Menú principal"   },
     ],
   });
 }
 
 /* ============================================================
-   SECCIÓN 5 · FLUJO DE SLOTS (motor SQL del backend)
+   SECCIÓN 6 · FLUJO DE SLOTS
    ============================================================ */
-
-const SEDE_SLUG = {
-  "Sede Centro": "sede-centro",
-  "Sede Norte":  "sede-norte",
-  "Sede Sur":    "sede-sur",
-};
 
 async function enviarSlots(to, sedeNombre, especialidad) {
   await sendText(to, `🔍 Consultando disponibilidad en *${sedeNombre}*... ⏳`);
@@ -345,13 +407,9 @@ async function enviarSlots(to, sedeNombre, especialidad) {
 }
 
 /* ============================================================
-   SECCIÓN 6 · FLUJO DE CONSULTA DE CITAS
+   SECCIÓN 7 · FLUJO DE "MIS CITAS"
    ============================================================ */
 
-/**
- * Busca al paciente, consulta sus citas y las muestra en un mensaje.
- * Luego ofrece opciones: agendar, cancelar, menú.
- */
 async function mostrarMisCitas(phone) {
   const paciente = await obtenerPaciente(phone);
 
@@ -379,10 +437,9 @@ async function mostrarMisCitas(phone) {
     return;
   }
 
-  // Filtrar solo activas o recientes (últimas 5)
-  const activas  = citas.filter(c => ["PENDIENTE", "CONFIRMADA"].includes(c.estado));
+  const activas   = citas.filter(c => ["PENDIENTE", "CONFIRMADA"].includes(c.estado));
   const recientes = citas.filter(c => ["COMPLETADA", "NO_ASISTIO", "CANCELADA"].includes(c.estado)).slice(0, 3);
-  const mostrar  = [...activas, ...recientes].slice(0, 5);
+  const mostrar   = [...activas, ...recientes].slice(0, 5);
 
   if (!mostrar.length) {
     await sendText(phone,
@@ -399,7 +456,6 @@ async function mostrarMisCitas(phone) {
     return;
   }
 
-  // Construir mensaje con lista de citas
   const nombre = paciente.nombre ? `*${paciente.nombre.split(" ")[0]}*` : "";
   let msg = `📋 *Mis citas* — Hola${nombre ? `, ${nombre}` : ""}! 👋\n\n`;
 
@@ -425,18 +481,14 @@ async function mostrarMisCitas(phone) {
 }
 
 /* ============================================================
-   SECCIÓN 7 · FLUJO DE CANCELACIÓN DE CITAS
+   SECCIÓN 8 · FLUJO DE CANCELACIÓN
    ============================================================ */
 
-/**
- * Muestra la lista de citas cancelables (PENDIENTE o CONFIRMADA).
- * Guarda el mapa de índices en la sesión.
- */
 async function iniciarCancelacion(phone) {
   const paciente = await obtenerPaciente(phone);
 
   if (!paciente) {
-    await sendText(phone, "ℹ️ No encontré una cuenta a tu número. Si quieres agendar una cita, selecciona la opción del menú.");
+    await sendText(phone, "ℹ️ No encontré una cuenta asociada a tu número.");
     await menuPrincipal(phone);
     return;
   }
@@ -464,16 +516,22 @@ async function iniciarCancelacion(phone) {
     return;
   }
 
-  // Guardar las citas cancelables en sesión para luego recuperar el ID
   await saveSession(phone, {
     paso:  "citas_cancelar_sel",
-    datos: { citasCancelables: cancelables.map(c => ({ id: c.id, especialidad: c.especialidad, fechaInicio: c.fechaInicio, sede: c.sede?.nombre })) },
+    datos: {
+      citasCancelables: cancelables.map(c => ({
+        id:          c.id,
+        especialidad: c.especialidad,
+        fechaInicio: c.fechaInicio,
+        sede:        c.sede?.nombre,
+      })),
+    },
   });
 
   await sendList(phone, {
     header:      "❌ Cancelar cita",
     body:        "Selecciona la cita que deseas cancelar:",
-    footer:      "Puedes cancelar hasta 2h antes",
+    footer:      "Solo citas pendientes o confirmadas",
     buttonLabel: "Ver citas",
     sections: [{ title: "Mis citas activas", rows: cancelables.map((c, i) => {
       const esp   = ESP_CORTA[c.especialidad] || c.especialidad.slice(0, 12);
@@ -488,9 +546,6 @@ async function iniciarCancelacion(phone) {
   });
 }
 
-/**
- * Pide confirmación antes de cancelar la cita seleccionada.
- */
 async function confirmarCancelacion(phone, indice, citasCancelables) {
   const cita = citasCancelables[indice];
   if (!cita) {
@@ -499,10 +554,12 @@ async function confirmarCancelacion(phone, indice, citasCancelables) {
     return;
   }
 
-  // Guardar la cita seleccionada en sesión para el paso de confirmación
   await saveSession(phone, {
     paso:  "citas_cancelar_conf",
-    datos: { citaId: cita.id, citaLabel: `${cita.especialidad} el ${fmtFecha(cita.fechaInicio)} en ${cita.sede || "—"}` },
+    datos: {
+      citaId:    cita.id,
+      citaLabel: `${cita.especialidad} el ${fmtFecha(cita.fechaInicio)} en ${cita.sede || "—"}`,
+    },
   });
 
   await sendButtons(phone, {
@@ -514,21 +571,20 @@ async function confirmarCancelacion(phone, indice, citasCancelables) {
       `📍 ${cita.sede || "—"}`,
     footer: "Esta acción no se puede deshacer",
     buttons: [
-      { id: "cancelar_si",  title: "✅ Sí, cancelar"    },
-      { id: "cancelar_no",  title: "↩️ No, volver"      },
+      { id: "cancelar_si", title: "✅ Sí, cancelar"  },
+      { id: "cancelar_no", title: "↩️ No, volver"    },
     ],
   });
 }
 
 /* ============================================================
-   SECCIÓN 8 · HANDLER PRINCIPAL
+   SECCIÓN 9 · HANDLER PRINCIPAL
    ============================================================ */
 
 async function handleBot(from, text, buttonId) {
   const msg     = text?.trim().toLowerCase() || "";
   const payload = buttonId || msg;
 
-  // Si el chat está en MANUAL no procesar
   if (await getChatStatus(from) === "MANUAL") return;
 
   const sesion = await getSession(from);
@@ -561,11 +617,13 @@ async function handleBot(from, text, buttonId) {
     } else if (payload === "menu_horarios") {
       await sendText(from,
         `🕐 *Horarios de atención:*\n\n` +
-        `🏢 *Sede Centro* — Lun–Vie 7:00–18:00 | Sáb 8:00–13:00\n` +
-        `🏢 *Sede Norte*  — Lun–Vie 7:00–17:00 | Sáb 8:00–12:00\n` +
-        `🏢 *Sede Sur*    — Lun–Vie 8:00–18:00 | Sáb 9:00–13:00\n\n` +
-        `⚠️ Domingos y festivos: sin atención.\n` +
-        `📞 Urgencias: 018000-000000`
+        `🏢 *Montería* — Lun–Vie 11:00–11:30 · tarde 17:00–17:30\n` +
+        `🏢 *Tierralta* — Lun/Mié/Vie tarde 16:40–17:10 · Mar/Jue mañana y tarde\n` +
+        `🏢 *Ciénaga de Oro* — Lun–Vie 11:00–11:20 · tarde 16:50–17:00\n` +
+        `🏢 *Cereté* — Lun/Mié/Vie 11:00–11:30 · todos tarde 13:30–15:30\n` +
+        `🏢 *San Carlos* — Solo Mar y Jue 7:40–10:00\n` +
+        `🏢 *Valencia* — Solo Lun/Mié/Vie 10:40–11:00\n\n` +
+        `⚠️ Domingos y festivos: sin atención.`
       );
       await sendButtons(from, {
         body:    "¿Deseas hacer algo más?",
@@ -593,7 +651,7 @@ async function handleBot(from, text, buttonId) {
     return;
   }
 
-  // ── "Mis citas" (estado transitorio post-display) ──────────
+  // ── "Mis citas" ────────────────────────────────────────────
   if (sesion.paso === "mis_citas") {
     if (payload === "citas_cancelar") {
       await iniciarCancelacion(from);
@@ -607,11 +665,11 @@ async function handleBot(from, text, buttonId) {
     return;
   }
 
-  // ── Cancelar: selección de cita ────────────────────────────
+  // ── Cancelar: selección ────────────────────────────────────
   if (sesion.paso === "citas_cancelar_sel") {
     const cancelables = sesion.datos?.citasCancelables || [];
 
-    if (payload === "menu_principal" || msg === "cancelar" || msg === "salir") {
+    if (payload === "menu_principal") {
       await saveSession(from, { paso: "menu", datos: {} });
       await menuPrincipal(from);
       return;
@@ -624,8 +682,7 @@ async function handleBot(from, text, buttonId) {
       return;
     }
 
-    const indice = parseInt(match[1]);
-    await confirmarCancelacion(from, indice, cancelables);
+    await confirmarCancelacion(from, parseInt(match[1]), cancelables);
     return;
   }
 
@@ -645,15 +702,14 @@ async function handleBot(from, text, buttonId) {
       try {
         await cancelarCitaAPI(citaId);
         await sendText(from,
-          `✅ *Cita cancelada exitosamente.*\n\n` +
-          `🩺 ${citaLabel}\n\n` +
+          `✅ *Cita cancelada exitosamente.*\n\n🩺 ${citaLabel}\n\n` +
           `Si necesitas reagendar, usa la opción *Agendar cita* del menú.`
         );
       } catch (err) {
         const esTimeout = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
         await sendText(from, esTimeout
           ? "⏱️ El servidor tardó mucho en responder. Intenta en unos segundos."
-          : "❌ No pudimos cancelar la cita en este momento. Por favor contacta a un asesor."
+          : "❌ No pudimos cancelar la cita. Por favor contacta a un asesor."
         );
       }
 
@@ -677,8 +733,8 @@ async function handleBot(from, text, buttonId) {
       await sendButtons(from, {
         body:    "¿Confirmas la cancelación?",
         buttons: [
-          { id: "cancelar_si", title: "✅ Sí, cancelar"  },
-          { id: "cancelar_no", title: "↩️ No, volver"    },
+          { id: "cancelar_si", title: "✅ Sí, cancelar" },
+          { id: "cancelar_no", title: "↩️ No, volver"   },
         ],
       });
     }
@@ -726,7 +782,7 @@ async function handleBot(from, text, buttonId) {
 
   // ── Documento ──────────────────────────────────────────────
   if (sesion.paso === "cita_documento") {
-    const doc = text?.trim().replace(/\D/g, ""); // Limpiar espacios y letras
+    const doc = text?.trim().replace(/\D/g, "");
     if (doc && doc.length >= 5 && doc.length <= 12) {
       await saveSession(from, { paso: "cita_nombre", datos: { ...sesion.datos, documento: doc } });
       await sendText(from, `✅ Documento: *${doc}*\n\nAhora escribe tu *nombre completo:*`);
@@ -745,7 +801,6 @@ async function handleBot(from, text, buttonId) {
       await sendText(from, "⚠️ Por favor escribe tu nombre completo (mínimo 3 caracteres):");
       return;
     }
-    // Validar que no sean solo números
     if (/^\d+$/.test(nombre)) {
       await sendText(from, "⚠️ El nombre no puede ser solo números. Escribe tu nombre completo:");
       return;
@@ -758,14 +813,10 @@ async function handleBot(from, text, buttonId) {
 
   // ── Sede de la cita ────────────────────────────────────────
   if (sesion.paso === "cita_sede") {
-    const SEDES = {
-      sede_cita_centro: "Sede Centro",
-      sede_cita_norte:  "Sede Norte",
-      sede_cita_sur:    "Sede Sur",
-    };
-    if (SEDES[payload]) {
-      await saveSession(from, { paso: "cita_slot", datos: { ...sesion.datos, sede: SEDES[payload] } });
-      await enviarSlots(from, SEDES[payload], sesion.datos.especialidad);
+    if (SEDES_MAP[payload]) {
+      const sede = SEDES_MAP[payload];
+      await saveSession(from, { paso: "cita_slot", datos: { ...sesion.datos, sede } });
+      await enviarSlots(from, sede, sesion.datos.especialidad);
     } else {
       await sendText(from, "Por favor selecciona una sede de la lista 👆");
       await menuSedesCita(from);
@@ -775,13 +826,9 @@ async function handleBot(from, text, buttonId) {
 
   // ── Selección de slot ──────────────────────────────────────
   if (sesion.paso === "cita_slot") {
-    const CAMBIO_SEDE = {
-      sede_cita_centro: "Sede Centro",
-      sede_cita_norte:  "Sede Norte",
-      sede_cita_sur:    "Sede Sur",
-    };
-    if (CAMBIO_SEDE[payload]) {
-      const nuevaSede = CAMBIO_SEDE[payload];
+    // Cambio de sede desde pantalla de slots
+    if (SEDES_MAP[payload]) {
+      const nuevaSede = SEDES_MAP[payload];
       await saveSession(from, { ...sesion, datos: { ...sesion.datos, sede: nuevaSede } });
       await enviarSlots(from, nuevaSede, sesion.datos.especialidad);
       return;
@@ -828,7 +875,7 @@ async function handleBot(from, text, buttonId) {
         `📍 ${sesion.datos.sede}\n` +
         `🆔 Ref: \`${cita.id.slice(-8).toUpperCase()}\`\n\n` +
         `✅ Recibirás confirmación pronto.\n` +
-        `Para cancelar o ver tus citas usa *"Mis citas"* en el menú.`
+        `Para ver o cancelar tu cita usa *"Mis citas"* en el menú.`
       );
     } catch (err) {
       const esColision = err.response?.status === 409;
@@ -860,14 +907,26 @@ async function handleBot(from, text, buttonId) {
 
   // ── Información de sedes ───────────────────────────────────
   if (sesion.paso === "sedes") {
-    const INFO = {
-      sede_centro: { nombre: "Sede Centro", dir: "Calle 10 #5-32, Piso 2",  tel: "(604) 321-0000", hora: "Lun–Vie 7–18 | Sáb 8–13", ref: "Frente al Parque Principal."      },
-      sede_norte:  { nombre: "Sede Norte",  dir: "Carrera 45 #80-15",       tel: "(604) 321-0001", hora: "Lun–Vie 7–17 | Sáb 8–12", ref: "Junto al Centro Comercial Norte." },
-      sede_sur:    { nombre: "Sede Sur",    dir: "Avenida 30 #12-40",       tel: "(604) 321-0002", hora: "Lun–Vie 8–18 | Sáb 9–13", ref: "Diagonal al Hospital del Sur."    },
+    // Mapeo de IDs de lista → keys de SEDES_INFO
+    const SEDE_ID_MAP = {
+      sede_monteria:  "sede_monteria",
+      sede_tierralta: "sede_tierralta",
+      sede_cdo:       "sede_cdo",
+      sede_cerete:    "sede_cerete",
+      sede_sancarlos: "sede_sancarlos",
+      sede_valencia:  "sede_valencia",
     };
-    if (INFO[payload]) {
-      const s = INFO[payload];
-      await sendText(from, `🏢 *${s.nombre}*\n\n📌 ${s.dir}\n📞 ${s.tel}\n🕐 ${s.hora}\n🗺️ ${s.ref}`);
+
+    const sedeKey = SEDE_ID_MAP[payload];
+    if (sedeKey && SEDES_INFO[sedeKey]) {
+      const s = SEDES_INFO[sedeKey];
+      await sendText(from,
+        `🏢 *${s.nombre}*\n\n` +
+        `📌 ${s.dir}\n` +
+        `📞 ${s.tel}\n` +
+        `🕐 ${s.horario}\n` +
+        `ℹ️ ${s.nota}`
+      );
       await sendButtons(from, {
         body:    "¿Qué deseas hacer?",
         buttons: [
