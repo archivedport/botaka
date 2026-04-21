@@ -1,24 +1,16 @@
 /**
  * ============================================================
  *  bot.js — IPS Salud Vida · WhatsApp Bot
+ *  v2.0 — Mejoras: consulta/cancelación de citas, UX y errores
+ * ============================================================
  *
- *  Responsabilidad única: conversar con el paciente por
- *  WhatsApp y delegar toda la lógica de negocio al backend.
- *
- *  Lo que hace este archivo:
- *    • Gestionar el flujo de conversación (sesión en Redis)
- *    • Enviar mensajes y menús interactivos a Meta
- *    • Llamar al backend para slots y para crear citas
- *    • Ceder el control cuando el chat está en MANUAL
- *
- *  Lo que NO hace (lo maneja el backend):
- *    • Métricas y contadores de conversaciones
- *    • Lógica de asesores (cola, handoff, comandos #fin/#info)
- *    • Persistencia de citas en PostgreSQL
- *    • Procesamiento de documentos con IA
- *    • Instancia propia de Redis (usa la del backend)
- *
- *  Dependencias: axios  |  Variables requeridas: .env
+ *  Flujos disponibles:
+ *    • Agendar cita     → especialidad → EPS → doc → nombre → sede → slot → confirmación
+ *    • Mis citas        → ver citas recientes → opción a cancelar
+ *    • Cancelar cita    → selección → confirmación → cancelación
+ *    • Horarios         → info por sede
+ *    • Sedes            → detalle de cada sede
+ *    • Hablar con asesor → handoff manual
  * ============================================================
  */
 
@@ -26,19 +18,16 @@
 
 const axios = require("axios");
 
-// ── Reutilizamos el cliente Redis y helpers del backend ───────
 const {
   getSession,
   saveSession,
   clearSession,
   getChatStatus,
-  getChatAsesor,
   saveSlotSelection,
   getSlotSelection,
   clearSlotSelection,
 } = require("./src/config/redis");
 
-// ── Configuración de Meta ─────────────────────────────────────
 const { meta } = require("./src/config/env");
 
 const WA_URL     = `${meta.baseUrl()}/${meta.phoneId}/messages`;
@@ -47,12 +36,14 @@ const WA_HEADERS = {
   "Content-Type": "application/json",
 };
 
-// ── URL del backend interno (mismo proceso en Railway) ────────
 const API_BASE          = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 const BOT_SERVICE_TOKEN = process.env.BOT_SERVICE_TOKEN || process.env.JWT_SECRET;
 
+// Timeout para llamadas al backend (ms)
+const API_TIMEOUT = 8000;
+
 /* ============================================================
-   SECCIÓN 1 · ENVÍO DE MENSAJES (Meta Cloud API)
+   SECCIÓN 1 · ENVÍO DE MENSAJES
    ============================================================ */
 
 async function sendText(to, body) {
@@ -112,7 +103,10 @@ async function sendList(to, { header, body, footer, buttonLabel, sections }) {
    SECCIÓN 2 · LLAMADAS AL BACKEND INTERNO
    ============================================================ */
 
-const apiHeaders = () => ({ Authorization: `Bearer ${BOT_SERVICE_TOKEN}` });
+const apiHeaders = () => ({
+  Authorization:  `Bearer ${BOT_SERVICE_TOKEN}`,
+  "Content-Type": "application/json",
+});
 
 /** Consulta slots disponibles al motor de calendario SQL. */
 async function obtenerSlots(sedeSlug, especialidad) {
@@ -121,6 +115,7 @@ async function obtenerSlots(sedeSlug, especialidad) {
   const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
     params:  { fecha: fecha.toISOString().slice(0, 10), especialidad, sede: sedeSlug },
     headers: apiHeaders(),
+    timeout: API_TIMEOUT,
   });
   return data.slots || [];
 }
@@ -130,7 +125,7 @@ async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
   const { data } = await axios.post(
     `${API_BASE}/api/calendar/appointments`,
     { pacienteId, sedeSlug, especialidad, fechaInicio: slot.inicio, fechaFin: slot.fin },
-    { headers: apiHeaders() }
+    { headers: apiHeaders(), timeout: API_TIMEOUT }
   );
   return data.cita;
 }
@@ -140,6 +135,7 @@ async function obtenerPaciente(phone) {
   try {
     const { data } = await axios.get(`${API_BASE}/api/patients/by-phone/${phone}`, {
       headers: apiHeaders(),
+      timeout: API_TIMEOUT,
     });
     return data.paciente;
   } catch {
@@ -147,8 +143,66 @@ async function obtenerPaciente(phone) {
   }
 }
 
+/** Obtiene las citas recientes del paciente (máx 8). */
+async function obtenerCitasPaciente(pacienteId) {
+  try {
+    const { data } = await axios.get(`${API_BASE}/api/calendar/appointments/${pacienteId}`, {
+      params:  { limit: 8, page: 1 },
+      headers: apiHeaders(),
+      timeout: API_TIMEOUT,
+    });
+    return data.citas || [];
+  } catch {
+    return [];
+  }
+}
+
+/** Cancela una cita específica por ID. */
+async function cancelarCitaAPI(citaId) {
+  await axios.patch(
+    `${API_BASE}/api/calendar/appointments/${citaId}/status`,
+    { estado: "CANCELADA" },
+    { headers: apiHeaders(), timeout: API_TIMEOUT }
+  );
+}
+
 /* ============================================================
-   SECCIÓN 3 · MENÚS REUTILIZABLES
+   SECCIÓN 3 · UTILIDADES DE FORMATO
+   ============================================================ */
+
+const ESTADO_LABEL = {
+  PENDIENTE:  "🟡 Pendiente",
+  CONFIRMADA: "🟢 Confirmada",
+  CANCELADA:  "🔴 Cancelada",
+  COMPLETADA: "✅ Completada",
+  NO_ASISTIO: "⚠️ No asistió",
+};
+
+const ESP_CORTA = {
+  "Medicina General": "Med. General",
+  "Odontología":      "Odontología",
+  "Psicología":       "Psicología",
+  "Nutrición":        "Nutrición",
+  "Especialistas":    "Especialista",
+};
+
+/** Formatea una fecha ISO a texto legible en español. */
+function fmtFecha(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString("es-CO", {
+    weekday: "short", day: "numeric", month: "short",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+/** Formatea hora corta HH:MM desde ISO. */
+function fmtHora(iso) {
+  return new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+}
+
+/* ============================================================
+   SECCIÓN 4 · MENÚS REUTILIZABLES
    ============================================================ */
 
 async function menuPrincipal(to) {
@@ -157,14 +211,17 @@ async function menuPrincipal(to) {
     body:    "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
     footer:  "Selecciona una opción",
     buttons: [
-      { id: "menu_cita",     title: "📅 Agendar cita" },
-      { id: "menu_horarios", title: "🕐 Horarios"      },
-      { id: "menu_sedes",    title: "📍 Sedes"         },
+      { id: "menu_cita",     title: "📅 Agendar cita"  },
+      { id: "menu_miscitas", title: "📋 Mis citas"      },
+      { id: "menu_horarios", title: "🕐 Horarios"       },
     ],
   });
   await sendButtons(to, {
-    body:    "¿Necesitas atención personalizada?",
-    buttons: [{ id: "menu_asesor", title: "👨‍💼 Hablar con asesor" }],
+    body:    "Más opciones:",
+    buttons: [
+      { id: "menu_sedes",  title: "📍 Sedes"            },
+      { id: "menu_asesor", title: "👨‍💼 Hablar con asesor" },
+    ],
   });
 }
 
@@ -226,8 +283,20 @@ async function menuSedes(to) {
   });
 }
 
+/** Muestra botones de acción post-consulta de citas. */
+async function menuPostCitas(to) {
+  await sendButtons(to, {
+    body:    "¿Qué deseas hacer?",
+    buttons: [
+      { id: "menu_cita",      title: "📅 Agendar cita"    },
+      { id: "citas_cancelar", title: "❌ Cancelar una cita" },
+      { id: "menu_principal", title: "🏠 Menú principal"  },
+    ],
+  });
+}
+
 /* ============================================================
-   SECCIÓN 4 · MOSTRAR SLOTS (motor SQL del backend)
+   SECCIÓN 5 · FLUJO DE SLOTS (motor SQL del backend)
    ============================================================ */
 
 const SEDE_SLUG = {
@@ -244,12 +313,16 @@ async function enviarSlots(to, sedeNombre, especialidad) {
     slots = await obtenerSlots(SEDE_SLUG[sedeNombre], especialidad);
   } catch (err) {
     console.error("❌ Error obteniendo slots:", err.message);
-    await sendText(to, "⚠️ No pudimos consultar la disponibilidad. Intenta en unos minutos.");
+    const esTimeout = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
+    await sendText(to, esTimeout
+      ? "⏱️ El servidor tardó demasiado en responder. Intenta en unos segundos."
+      : "⚠️ No pudimos consultar la disponibilidad en este momento. Intenta en unos minutos."
+    );
     return false;
   }
 
   if (!slots.length) {
-    await sendText(to, `😔 Sin disponibilidad en *${sedeNombre}* para los próximos días.\n¿Deseas consultar en otra sede?`);
+    await sendText(to, `😔 Sin disponibilidad en *${sedeNombre}* para mañana.\n¿Deseas consultar en otra sede?`);
     await menuSedesCita(to);
     return false;
   }
@@ -263,7 +336,7 @@ async function enviarSlots(to, sedeNombre, especialidad) {
     buttonLabel: "Ver horarios",
     sections: [{ title: "Próximos horarios libres", rows: slots.map((s, i) => ({
       id:          `slot_${i}`,
-      title:       s.label,
+      title:       s.label.slice(0, 24),
       description: sedeNombre,
     })) }],
   });
@@ -272,20 +345,199 @@ async function enviarSlots(to, sedeNombre, especialidad) {
 }
 
 /* ============================================================
-   SECCIÓN 5 · HANDLER PRINCIPAL
+   SECCIÓN 6 · FLUJO DE CONSULTA DE CITAS
+   ============================================================ */
+
+/**
+ * Busca al paciente, consulta sus citas y las muestra en un mensaje.
+ * Luego ofrece opciones: agendar, cancelar, menú.
+ */
+async function mostrarMisCitas(phone) {
+  const paciente = await obtenerPaciente(phone);
+
+  if (!paciente) {
+    await sendText(phone,
+      `📋 *Mis citas*\n\nNo encontré una cuenta asociada a este número.\n\n` +
+      `¿Deseas agendar tu primera cita con nosotros?`
+    );
+    await sendButtons(phone, {
+      body:    "¿Qué deseas hacer?",
+      buttons: [
+        { id: "menu_cita",      title: "📅 Agendar cita"   },
+        { id: "menu_principal", title: "🏠 Menú principal" },
+      ],
+    });
+    return;
+  }
+
+  let citas = [];
+  try {
+    citas = await obtenerCitasPaciente(paciente.id);
+  } catch {
+    await sendText(phone, "⚠️ No pudimos cargar tus citas en este momento. Intenta más tarde.");
+    await menuPrincipal(phone);
+    return;
+  }
+
+  // Filtrar solo activas o recientes (últimas 5)
+  const activas  = citas.filter(c => ["PENDIENTE", "CONFIRMADA"].includes(c.estado));
+  const recientes = citas.filter(c => ["COMPLETADA", "NO_ASISTIO", "CANCELADA"].includes(c.estado)).slice(0, 3);
+  const mostrar  = [...activas, ...recientes].slice(0, 5);
+
+  if (!mostrar.length) {
+    await sendText(phone,
+      `📋 *Mis citas*\n\nHola${paciente.nombre ? `, *${paciente.nombre.split(" ")[0]}*` : ""}! 👋\n\n` +
+      `No tienes citas registradas aún.`
+    );
+    await sendButtons(phone, {
+      body:    "¿Deseas agendar una cita?",
+      buttons: [
+        { id: "menu_cita",      title: "📅 Agendar cita"   },
+        { id: "menu_principal", title: "🏠 Menú principal" },
+      ],
+    });
+    return;
+  }
+
+  // Construir mensaje con lista de citas
+  const nombre = paciente.nombre ? `*${paciente.nombre.split(" ")[0]}*` : "";
+  let msg = `📋 *Mis citas* — Hola${nombre ? `, ${nombre}` : ""}! 👋\n\n`;
+
+  if (activas.length) {
+    msg += `✅ *Próximas citas activas:*\n`;
+    activas.forEach((c, i) => {
+      msg += `\n${i + 1}. 🩺 *${c.especialidad}*\n`;
+      msg += `   📅 ${fmtFecha(c.fechaInicio)}\n`;
+      msg += `   📍 ${c.sede?.nombre || "—"}\n`;
+      msg += `   ${ESTADO_LABEL[c.estado] || c.estado}\n`;
+    });
+  }
+
+  if (recientes.length) {
+    msg += `\n📁 *Historial reciente:*\n`;
+    recientes.forEach(c => {
+      msg += `\n• ${c.especialidad} — ${new Date(c.fechaInicio).toLocaleDateString("es-CO", { day: "numeric", month: "short" })} (${ESTADO_LABEL[c.estado] || c.estado})\n`;
+    });
+  }
+
+  await sendText(phone, msg);
+  await menuPostCitas(phone);
+}
+
+/* ============================================================
+   SECCIÓN 7 · FLUJO DE CANCELACIÓN DE CITAS
+   ============================================================ */
+
+/**
+ * Muestra la lista de citas cancelables (PENDIENTE o CONFIRMADA).
+ * Guarda el mapa de índices en la sesión.
+ */
+async function iniciarCancelacion(phone) {
+  const paciente = await obtenerPaciente(phone);
+
+  if (!paciente) {
+    await sendText(phone, "ℹ️ No encontré una cuenta a tu número. Si quieres agendar una cita, selecciona la opción del menú.");
+    await menuPrincipal(phone);
+    return;
+  }
+
+  let citas = [];
+  try {
+    citas = await obtenerCitasPaciente(paciente.id);
+  } catch {
+    await sendText(phone, "⚠️ No pudimos cargar tus citas. Intenta en unos minutos.");
+    await menuPrincipal(phone);
+    return;
+  }
+
+  const cancelables = citas.filter(c => ["PENDIENTE", "CONFIRMADA"].includes(c.estado));
+
+  if (!cancelables.length) {
+    await sendText(phone, "ℹ️ No tienes citas pendientes o confirmadas que puedas cancelar.");
+    await sendButtons(phone, {
+      body:    "¿Qué deseas hacer?",
+      buttons: [
+        { id: "menu_cita",      title: "📅 Agendar cita"   },
+        { id: "menu_principal", title: "🏠 Menú principal" },
+      ],
+    });
+    return;
+  }
+
+  // Guardar las citas cancelables en sesión para luego recuperar el ID
+  await saveSession(phone, {
+    paso:  "citas_cancelar_sel",
+    datos: { citasCancelables: cancelables.map(c => ({ id: c.id, especialidad: c.especialidad, fechaInicio: c.fechaInicio, sede: c.sede?.nombre })) },
+  });
+
+  await sendList(phone, {
+    header:      "❌ Cancelar cita",
+    body:        "Selecciona la cita que deseas cancelar:",
+    footer:      "Puedes cancelar hasta 2h antes",
+    buttonLabel: "Ver citas",
+    sections: [{ title: "Mis citas activas", rows: cancelables.map((c, i) => {
+      const esp   = ESP_CORTA[c.especialidad] || c.especialidad.slice(0, 12);
+      const hora  = fmtHora(c.fechaInicio);
+      const fecha = new Date(c.fechaInicio).toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+      return {
+        id:          `cancelar_${i}`,
+        title:       `${esp} ${hora}`.slice(0, 24),
+        description: `${fecha} · ${c.sede?.nombre || "—"} · ${ESTADO_LABEL[c.estado] || c.estado}`.slice(0, 72),
+      };
+    })}],
+  });
+}
+
+/**
+ * Pide confirmación antes de cancelar la cita seleccionada.
+ */
+async function confirmarCancelacion(phone, indice, citasCancelables) {
+  const cita = citasCancelables[indice];
+  if (!cita) {
+    await sendText(phone, "⚠️ No encontré esa cita. Vuelve a intentarlo.");
+    await iniciarCancelacion(phone);
+    return;
+  }
+
+  // Guardar la cita seleccionada en sesión para el paso de confirmación
+  await saveSession(phone, {
+    paso:  "citas_cancelar_conf",
+    datos: { citaId: cita.id, citaLabel: `${cita.especialidad} el ${fmtFecha(cita.fechaInicio)} en ${cita.sede || "—"}` },
+  });
+
+  await sendButtons(phone, {
+    header: "❌ Confirmar cancelación",
+    body:
+      `¿Estás seguro de cancelar esta cita?\n\n` +
+      `🩺 *${cita.especialidad}*\n` +
+      `📅 ${fmtFecha(cita.fechaInicio)}\n` +
+      `📍 ${cita.sede || "—"}`,
+    footer: "Esta acción no se puede deshacer",
+    buttons: [
+      { id: "cancelar_si",  title: "✅ Sí, cancelar"    },
+      { id: "cancelar_no",  title: "↩️ No, volver"      },
+    ],
+  });
+}
+
+/* ============================================================
+   SECCIÓN 8 · HANDLER PRINCIPAL
    ============================================================ */
 
 async function handleBot(from, text, buttonId) {
   const msg     = text?.trim().toLowerCase() || "";
   const payload = buttonId || msg;
 
-  // Segunda defensa: si el chat está en MANUAL no procesar
+  // Si el chat está en MANUAL no procesar
   if (await getChatStatus(from) === "MANUAL") return;
 
   const sesion = await getSession(from);
 
-  // ── Reinicio ───────────────────────────────────────────────
-  if (["hola", "menu", "menú", "inicio", "start"].includes(msg) || payload === "menu_principal") {
+  // ── Reinicio universal ─────────────────────────────────────
+  if (
+    ["hola", "menu", "menú", "inicio", "start", "ayuda", "help"].includes(msg) ||
+    payload === "menu_principal"
+  ) {
     await clearSession(from);
     await saveSession(from, { paso: "menu", datos: {} });
     await menuPrincipal(from);
@@ -294,17 +546,26 @@ async function handleBot(from, text, buttonId) {
 
   // ── Menú principal ─────────────────────────────────────────
   if (sesion.paso === "inicio" || sesion.paso === "menu") {
+
     if (payload === "menu_cita") {
       await saveSession(from, { paso: "cita_especialidad", datos: {} });
       await menuEspecialidades(from);
 
+    } else if (payload === "menu_miscitas" || payload === "mis citas") {
+      await saveSession(from, { paso: "mis_citas", datos: {} });
+      await mostrarMisCitas(from);
+
+    } else if (payload === "citas_cancelar") {
+      await iniciarCancelacion(from);
+
     } else if (payload === "menu_horarios") {
       await sendText(from,
         `🕐 *Horarios de atención:*\n\n` +
-        `🏢 *Sede Centro* — Lun–Vie 7–18 | Sáb 8–13\n` +
-        `🏢 *Sede Norte*  — Lun–Vie 7–17 | Sáb 8–12\n` +
-        `🏢 *Sede Sur*    — Lun–Vie 8–18 | Sáb 9–13\n\n` +
-        `⚠️ Domingos y festivos: sin atención.\n📞 Urgencias: 018000-000000`
+        `🏢 *Sede Centro* — Lun–Vie 7:00–18:00 | Sáb 8:00–13:00\n` +
+        `🏢 *Sede Norte*  — Lun–Vie 7:00–17:00 | Sáb 8:00–12:00\n` +
+        `🏢 *Sede Sur*    — Lun–Vie 8:00–18:00 | Sáb 9:00–13:00\n\n` +
+        `⚠️ Domingos y festivos: sin atención.\n` +
+        `📞 Urgencias: 018000-000000`
       );
       await sendButtons(from, {
         body:    "¿Deseas hacer algo más?",
@@ -321,10 +582,105 @@ async function handleBot(from, text, buttonId) {
 
     } else if (payload === "menu_asesor") {
       await saveSession(from, { paso: "asesor_motivo", datos: {} });
-      await sendText(from, `👨‍💼 Con gusto te conectamos con un asesor.\n\n¿*Cuál es el motivo de tu consulta?*\n_(Escribe tu mensaje)_`);
+      await sendText(from,
+        `👨‍💼 Con gusto te conectamos con un asesor.\n\n` +
+        `¿*Cuál es el motivo de tu consulta?*\n_(Escribe tu mensaje)_`
+      );
 
     } else {
       await menuPrincipal(from);
+    }
+    return;
+  }
+
+  // ── "Mis citas" (estado transitorio post-display) ──────────
+  if (sesion.paso === "mis_citas") {
+    if (payload === "citas_cancelar") {
+      await iniciarCancelacion(from);
+    } else if (payload === "menu_cita") {
+      await saveSession(from, { paso: "cita_especialidad", datos: {} });
+      await menuEspecialidades(from);
+    } else {
+      await saveSession(from, { paso: "menu", datos: {} });
+      await menuPrincipal(from);
+    }
+    return;
+  }
+
+  // ── Cancelar: selección de cita ────────────────────────────
+  if (sesion.paso === "citas_cancelar_sel") {
+    const cancelables = sesion.datos?.citasCancelables || [];
+
+    if (payload === "menu_principal" || msg === "cancelar" || msg === "salir") {
+      await saveSession(from, { paso: "menu", datos: {} });
+      await menuPrincipal(from);
+      return;
+    }
+
+    const match = payload.match(/^cancelar_(\d+)$/);
+    if (!match) {
+      await sendText(from, "Por favor selecciona una cita de la lista 👆");
+      await iniciarCancelacion(from);
+      return;
+    }
+
+    const indice = parseInt(match[1]);
+    await confirmarCancelacion(from, indice, cancelables);
+    return;
+  }
+
+  // ── Cancelar: confirmación ─────────────────────────────────
+  if (sesion.paso === "citas_cancelar_conf") {
+    const { citaId, citaLabel } = sesion.datos || {};
+
+    if (payload === "cancelar_si") {
+      if (!citaId) {
+        await sendText(from, "⚠️ Ocurrió un error. Por favor intenta nuevamente.");
+        await menuPrincipal(from);
+        return;
+      }
+
+      await sendText(from, "⏳ Procesando cancelación...");
+
+      try {
+        await cancelarCitaAPI(citaId);
+        await sendText(from,
+          `✅ *Cita cancelada exitosamente.*\n\n` +
+          `🩺 ${citaLabel}\n\n` +
+          `Si necesitas reagendar, usa la opción *Agendar cita* del menú.`
+        );
+      } catch (err) {
+        const esTimeout = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
+        await sendText(from, esTimeout
+          ? "⏱️ El servidor tardó mucho en responder. Intenta en unos segundos."
+          : "❌ No pudimos cancelar la cita en este momento. Por favor contacta a un asesor."
+        );
+      }
+
+      await clearSession(from);
+      await saveSession(from, { paso: "menu", datos: {} });
+      await sendButtons(from, {
+        body:    "¿Deseas hacer algo más?",
+        buttons: [
+          { id: "menu_cita",      title: "📅 Nueva cita"     },
+          { id: "menu_miscitas",  title: "📋 Mis citas"       },
+          { id: "menu_principal", title: "🏠 Menú principal" },
+        ],
+      });
+
+    } else if (payload === "cancelar_no") {
+      await sendText(from, "↩️ Cancelación abortada. Tu cita sigue activa.");
+      await saveSession(from, { paso: "menu", datos: {} });
+      await menuPostCitas(from);
+
+    } else {
+      await sendButtons(from, {
+        body:    "¿Confirmas la cancelación?",
+        buttons: [
+          { id: "cancelar_si", title: "✅ Sí, cancelar"  },
+          { id: "cancelar_no", title: "↩️ No, volver"    },
+        ],
+      });
     }
     return;
   }
@@ -342,7 +698,7 @@ async function handleBot(from, text, buttonId) {
       await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
       await menuEPS(from, ESP[payload]);
     } else {
-      await sendText(from, "Por favor selecciona una especialidad 👆");
+      await sendText(from, "Por favor selecciona una especialidad de la lista 👆");
       await menuEspecialidades(from);
     }
     return;
@@ -360,9 +716,9 @@ async function handleBot(from, text, buttonId) {
     };
     if (EPS[payload]) {
       await saveSession(from, { paso: "cita_documento", datos: { ...sesion.datos, eps: EPS[payload] } });
-      await sendText(from, `✅ EPS: *${EPS[payload]}*\n\nEscribe tu *número de documento:*`);
+      await sendText(from, `✅ EPS: *${EPS[payload]}*\n\nEscribe tu *número de documento* (solo números):`);
     } else {
-      await sendText(from, "Por favor selecciona tu EPS 👆");
+      await sendText(from, "Por favor selecciona tu EPS de la lista 👆");
       await menuEPS(from, sesion.datos.especialidad);
     }
     return;
@@ -370,12 +726,14 @@ async function handleBot(from, text, buttonId) {
 
   // ── Documento ──────────────────────────────────────────────
   if (sesion.paso === "cita_documento") {
-    const doc = text?.trim();
-    if (doc && doc.length >= 6 && !isNaN(doc)) {
+    const doc = text?.trim().replace(/\D/g, ""); // Limpiar espacios y letras
+    if (doc && doc.length >= 5 && doc.length <= 12) {
       await saveSession(from, { paso: "cita_nombre", datos: { ...sesion.datos, documento: doc } });
-      await sendText(from, `✅ Documento recibido.\n\nEscribe tu *nombre completo:*`);
+      await sendText(from, `✅ Documento: *${doc}*\n\nAhora escribe tu *nombre completo:*`);
+    } else if (!doc || doc.length < 5) {
+      await sendText(from, "⚠️ El documento debe tener al menos 5 dígitos. Intenta de nuevo:");
     } else {
-      await sendText(from, "⚠️ Documento inválido (solo números, mínimo 6 dígitos).");
+      await sendText(from, "⚠️ Documento demasiado largo. Verifica e intenta de nuevo:");
     }
     return;
   }
@@ -383,13 +741,18 @@ async function handleBot(from, text, buttonId) {
   // ── Nombre ─────────────────────────────────────────────────
   if (sesion.paso === "cita_nombre") {
     const nombre = text?.trim();
-    if (nombre && nombre.length >= 3) {
-      await saveSession(from, { paso: "cita_sede", datos: { ...sesion.datos, nombre } });
-      await sendText(from, `Gracias, *${nombre}*. 😊\n\nSelecciona la sede para tu cita:`);
-      await menuSedesCita(from);
-    } else {
-      await sendText(from, "⚠️ Escribe tu nombre completo (mínimo 3 caracteres).");
+    if (!nombre || nombre.length < 3) {
+      await sendText(from, "⚠️ Por favor escribe tu nombre completo (mínimo 3 caracteres):");
+      return;
     }
+    // Validar que no sean solo números
+    if (/^\d+$/.test(nombre)) {
+      await sendText(from, "⚠️ El nombre no puede ser solo números. Escribe tu nombre completo:");
+      return;
+    }
+    await saveSession(from, { paso: "cita_sede", datos: { ...sesion.datos, nombre } });
+    await sendText(from, `Gracias, *${nombre}*. 😊\n\nSelecciona la sede para tu cita:`);
+    await menuSedesCita(from);
     return;
   }
 
@@ -404,7 +767,7 @@ async function handleBot(from, text, buttonId) {
       await saveSession(from, { paso: "cita_slot", datos: { ...sesion.datos, sede: SEDES[payload] } });
       await enviarSlots(from, SEDES[payload], sesion.datos.especialidad);
     } else {
-      await sendText(from, "Por favor selecciona una sede 👆");
+      await sendText(from, "Por favor selecciona una sede de la lista 👆");
       await menuSedesCita(from);
     }
     return;
@@ -412,7 +775,6 @@ async function handleBot(from, text, buttonId) {
 
   // ── Selección de slot ──────────────────────────────────────
   if (sesion.paso === "cita_slot") {
-    // Permitir cambiar de sede desde esta pantalla
     const CAMBIO_SEDE = {
       sede_cita_centro: "Sede Centro",
       sede_cita_norte:  "Sede Norte",
@@ -434,14 +796,14 @@ async function handleBot(from, text, buttonId) {
 
     const slots = await getSlotSelection(from);
     if (!slots) {
-      await sendText(from, "⚠️ Los horarios expiraron. Volvemos a consultar...");
+      await sendText(from, "⏱️ Los horarios expiraron. Volvemos a consultar...");
       await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
       return;
     }
 
     const slot = slots[parseInt(slotMatch[1])];
     if (!slot) {
-      await sendText(from, "Por favor selecciona un horario válido 👆");
+      await sendText(from, "⚠️ Ese horario ya no está disponible. Selecciona otro:");
       await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
       return;
     }
@@ -458,22 +820,27 @@ async function handleBot(from, text, buttonId) {
       );
 
       await sendText(from,
-        `🎉 *¡Cita registrada!*\n\n` +
+        `🎉 *¡Cita registrada exitosamente!*\n\n` +
         `👤 ${sesion.datos.nombre}\n` +
         `🪪 ${sesion.datos.documento}\n` +
-        `🏥 ${sesion.datos.especialidad} | 🏦 ${sesion.datos.eps}\n` +
+        `🏥 ${sesion.datos.especialidad} · ${sesion.datos.eps}\n` +
         `📅 ${slot.label}\n` +
         `📍 ${sesion.datos.sede}\n` +
         `🆔 Ref: \`${cita.id.slice(-8).toUpperCase()}\`\n\n` +
-        `✅ Nos pondremos en contacto para confirmar.`
+        `✅ Recibirás confirmación pronto.\n` +
+        `Para cancelar o ver tus citas usa *"Mis citas"* en el menú.`
       );
     } catch (err) {
       const esColision = err.response?.status === 409;
-      await sendText(from,
-        esColision
-          ? "⚠️ Ese horario acaba de ser reservado. Selecciona otro:"
-          : "❌ No pudimos registrar tu cita. Intenta nuevamente."
-      );
+      const esTimeout  = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
+
+      if (esColision) {
+        await sendText(from, "⚠️ Ese horario acaba de ser reservado por otra persona. Selecciona otro:");
+      } else if (esTimeout) {
+        await sendText(from, "⏱️ El servidor tardó demasiado. Intenta seleccionar el horario nuevamente:");
+      } else {
+        await sendText(from, "❌ Ocurrió un error al registrar tu cita. Por favor intenta nuevamente:");
+      }
       await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
       return;
     }
@@ -483,7 +850,8 @@ async function handleBot(from, text, buttonId) {
     await sendButtons(from, {
       body:    "¿Deseas hacer algo más?",
       buttons: [
-        { id: "menu_cita",      title: "📅 Nueva cita"    },
+        { id: "menu_miscitas",  title: "📋 Mis citas"       },
+        { id: "menu_cita",      title: "📅 Nueva cita"      },
         { id: "menu_principal", title: "🏠 Menú principal" },
       ],
     });
@@ -519,26 +887,26 @@ async function handleBot(from, text, buttonId) {
   if (sesion.paso === "asesor_motivo") {
     const motivo = text?.trim();
     if (!motivo || motivo.length < 3) {
-      await sendText(from, "Por favor cuéntanos el motivo de tu consulta. ✍️");
+      await sendText(from, "Por favor cuéntanos el motivo de tu consulta ✍️ (al menos 3 caracteres):");
       return;
     }
-    // El backend gestiona el handoff via PATCH /api/chat/toggle-status
-    // El bot solo informa al paciente que quedó en espera
     await sendText(from,
-      `⏳ *Conectando con un asesor...*\n\nMotivo: _${motivo}_\n\nUn asesor se comunicará contigo en breve. 🔔`
+      `⏳ *Conectando con un asesor...*\n\nMotivo: _${motivo}_\n\n` +
+      `Un asesor se comunicará contigo en breve. 🔔\n` +
+      `Mientras esperas, puedes seguir enviando mensajes.`
     );
     await saveSession(from, { paso: "con_asesor", datos: { motivo } });
     return;
   }
 
-  // ── Fallback ───────────────────────────────────────────────
+  // ── Fallback global ────────────────────────────────────────
   await clearSession(from);
   await saveSession(from, { paso: "menu", datos: {} });
-  await sendText(from, "😅 No entendí tu mensaje. Aquí tienes el menú principal:");
+  await sendText(from, "😅 No entendí ese mensaje. Aquí tienes el menú principal:");
   await menuPrincipal(from);
 }
 
 /* ============================================================
-   EXPORTACIONES  (consumidas por src/server.js)
+   EXPORTACIONES
    ============================================================ */
 module.exports = { handleBot, sendText, sendButtons, menuPrincipal, saveSession };
