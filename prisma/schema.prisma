@@ -1,0 +1,199 @@
+// ============================================================
+//  schema.prisma — IPS Salud Vida
+//  Motor: PostgreSQL (Railway)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────
+
+enum RolUsuario {
+  ADMIN
+  ASESOR
+}
+
+enum EstadoChat {
+  BOT
+  MANUAL
+}
+
+enum EstadoCita {
+  PENDIENTE
+  CONFIRMADA
+  CANCELADA
+  COMPLETADA
+  NO_ASISTIO
+}
+
+enum TipoDocumentoIA {
+  CEDULA
+  CARNET_EPS
+  ORDEN_MEDICA
+  RESULTADO_LAB
+  OTRO
+}
+
+enum AccionAuditoria {
+  VER_HISTORIA
+  CREAR_CITA
+  CANCELAR_CITA
+  CONFIRMAR_CITA
+  TOMAR_CONTROL_CHAT
+  LIBERAR_CHAT
+  PROCESAR_DOCUMENTO
+  EDITAR_PACIENTE
+  EXPORTAR_DATOS
+}
+
+// ── Modelo: Usuarios (Asesores / Admins) ─────────────────────
+
+model Usuario {
+  id            String    @id @default(cuid())
+  nombre        String
+  email         String    @unique
+  passwordHash  String
+  rol           RolUsuario @default(ASESOR)
+  activo        Boolean   @default(true)
+  ultimoAcceso  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relaciones
+  citas         Cita[]    @relation("CitaAsesor")
+  auditoria     LogAuditoria[]
+  logsIA        LogIA[]
+
+  @@map("usuarios")
+}
+
+// ── Modelo: Pacientes ────────────────────────────────────────
+
+model Paciente {
+  id              String    @id @default(cuid())
+  phone           String    @unique          // Número WhatsApp (sin +)
+  nombre          String?
+  documento       String?   @unique
+  tipoDocumento   String?   @default("CC")  // CC, TI, CE, PA
+  fechaNacimiento DateTime?
+  email           String?
+  celular         String?
+  eps             String?
+  vigenciaEPS     DateTime?
+  sede            String?                   // Sede preferida
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  citas           Cita[]
+  logsIA          LogIA[]
+
+  @@map("pacientes")
+}
+
+// ── Modelo: Sede ─────────────────────────────────────────────
+
+model Sede {
+  id          String   @id @default(cuid())
+  slug        String   @unique              // "sede-centro", "sede-norte"
+  nombre      String
+  direccion   String
+  telefono    String
+  activa      Boolean  @default(true)
+
+  // Horarios de atención por día (0=Dom … 6=Sáb)
+  horarios    HorarioSede[]
+  citas       Cita[]
+
+  @@map("sedes")
+}
+
+model HorarioSede {
+  id          String  @id @default(cuid())
+  sedeId      String
+  diaSemana   Int     // 0–6
+  apertura    String  // "07:00"
+  cierre      String  // "18:00"
+  duracionSlot Int    @default(30)   // minutos por slot
+
+  sede        Sede    @relation(fields: [sedeId], references: [id])
+
+  @@unique([sedeId, diaSemana])
+  @@map("horarios_sede")
+}
+
+// ── Modelo: Citas ────────────────────────────────────────────
+
+model Cita {
+  id              String     @id @default(cuid())
+  pacienteId      String
+  sedeId          String
+  asesorId        String?
+  especialidad    String
+  fechaInicio     DateTime
+  fechaFin        DateTime
+  estado          EstadoCita @default(PENDIENTE)
+  motivoConsulta  String?
+  notas           String?
+  recordatorio24h Boolean    @default(false)
+  recordatorio2h  Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relaciones
+  paciente        Paciente   @relation(fields: [pacienteId], references: [id])
+  sede            Sede       @relation(fields: [sedeId], references: [id])
+  asesor          Usuario?   @relation("CitaAsesor", fields: [asesorId], references: [id])
+
+  @@index([fechaInicio, sedeId, especialidad])
+  @@index([pacienteId])
+  @@map("citas")
+}
+
+// ── Modelo: Logs de IA (auditoría de documentos) ──────────────
+
+model LogIA {
+  id              String           @id @default(cuid())
+  pacienteId      String?
+  asesorId        String?
+  mediaId         String           // ID de Meta
+  tipoDocumento   TipoDocumentoIA
+  resultadoRaw    Json             // Respuesta cruda de Gemini
+  resultadoParsed Json?            // JSON estructurado extraído
+  confianza       Float?           // 0.0 – 1.0
+  validadoPor     String?          // asesorId que validó
+  validadoEn      DateTime?
+  createdAt       DateTime         @default(now())
+
+  // Relaciones
+  paciente        Paciente?        @relation(fields: [pacienteId], references: [id])
+  asesor          Usuario?         @relation(fields: [asesorId], references: [id])
+
+  @@map("logs_ia")
+}
+
+// ── Modelo: Auditoría de acciones ─────────────────────────────
+
+model LogAuditoria {
+  id          String          @id @default(cuid())
+  usuarioId   String
+  accion      AccionAuditoria
+  entidadTipo String?         // "Cita", "Paciente", etc.
+  entidadId   String?
+  detalle     Json?           // Snapshot del estado antes/después
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime        @default(now())
+
+  usuario     Usuario         @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId, createdAt])
+  @@index([entidadTipo, entidadId])
+  @@map("logs_auditoria")
+}
