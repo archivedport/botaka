@@ -46,6 +46,7 @@ router.post(   "/api/calendar/appointments",             requireAuth, calCtrl.cr
 router.get(    "/api/calendar/appointments/:pacienteId", requireAuth, calCtrl.getByPaciente);
 router.patch(  "/api/calendar/appointments/:id/status",  requireAuth, calCtrl.updateStatus);
 router.delete( "/api/calendar/appointments/:id",         requireAuth, calCtrl.cancelAppointment);
+router.get("/api/calendar/events", requireAuth, calCtrl.getEvents);
 
 // ── Documentos / IA ───────────────────────────────────────────
 router.post("/api/process-document",          requireAuth, docCtrl.processDocument);
