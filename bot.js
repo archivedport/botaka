@@ -27,9 +27,28 @@ const WA_HEADERS = {
   "Content-Type": "application/json",
 };
 
-const API_BASE          = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
-const BOT_SERVICE_TOKEN = process.env.BOT_SERVICE_TOKEN || process.env.JWT_SECRET;
-const API_TIMEOUT       = 8000;
+const API_BASE   = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+const API_TIMEOUT = 8000;
+
+// ── Auth: el bot se loguea y obtiene un JWT real ──────────────
+let _botToken    = null;
+let _tokenExpiry = 0;
+
+async function getBotToken() {
+  if (_botToken && Date.now() < _tokenExpiry - 5 * 60 * 1000) return _botToken;
+  const { data } = await axios.post(
+    `${API_BASE}/api/auth/login`,
+    {
+      email:    process.env.BOT_EMAIL    || "admin@ipssaludvida.com",
+      password: process.env.BOT_PASSWORD || process.env.ADMIN_PASSWORD || "Admin123!",
+    },
+    { timeout: API_TIMEOUT }
+  );
+  _botToken    = data.token;
+  _tokenExpiry = Date.now() + 8 * 60 * 60 * 1000;
+  console.log("✅ Bot: token renovado");
+  return _botToken;
+}
 
 /* ============================================================
    SECCIÓN 1 · ENVÍO DE MENSAJES
@@ -92,8 +111,8 @@ async function sendList(to, { header, body, footer, buttonLabel, sections }) {
    SECCIÓN 2 · LLAMADAS AL BACKEND INTERNO
    ============================================================ */
 
-const apiHeaders = () => ({
-  Authorization:  `Bearer ${BOT_SERVICE_TOKEN}`,
+const apiHeaders = async () => ({
+  Authorization:  `Bearer ${await getBotToken()}`,
   "Content-Type": "application/json",
 });
 
@@ -102,7 +121,7 @@ async function obtenerSlots(sedeSlug, especialidad) {
   fecha.setDate(fecha.getDate() + 1);
   const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
     params:  { fecha: fecha.toISOString().slice(0, 10), especialidad, sede: sedeSlug },
-    headers: apiHeaders(),
+    headers: await apiHeaders(),
     timeout: API_TIMEOUT,
   });
   return data.slots || [];
@@ -112,7 +131,7 @@ async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
   const { data } = await axios.post(
     `${API_BASE}/api/calendar/appointments`,
     { pacienteId, sedeSlug, especialidad, fechaInicio: slot.inicio, fechaFin: slot.fin },
-    { headers: apiHeaders(), timeout: API_TIMEOUT }
+    { headers: await apiHeaders(), timeout: API_TIMEOUT }
   );
   return data.cita;
 }
@@ -120,7 +139,7 @@ async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
 async function obtenerPaciente(phone) {
   try {
     const { data } = await axios.get(`${API_BASE}/api/patients/by-phone/${phone}`, {
-      headers: apiHeaders(),
+      headers: await apiHeaders(),
       timeout: API_TIMEOUT,
     });
     return data.paciente;
@@ -133,7 +152,7 @@ async function obtenerCitasPaciente(pacienteId) {
   try {
     const { data } = await axios.get(`${API_BASE}/api/calendar/appointments/${pacienteId}`, {
       params:  { limit: 8, page: 1 },
-      headers: apiHeaders(),
+      headers: await apiHeaders(),
       timeout: API_TIMEOUT,
     });
     return data.citas || [];
@@ -146,7 +165,7 @@ async function cancelarCitaAPI(citaId) {
   await axios.patch(
     `${API_BASE}/api/calendar/appointments/${citaId}/status`,
     { estado: "CANCELADA" },
-    { headers: apiHeaders(), timeout: API_TIMEOUT }
+    { headers: await apiHeaders(), timeout: API_TIMEOUT }
   );
 }
 
