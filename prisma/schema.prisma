@@ -124,7 +124,7 @@ model HorarioSede {
 
   sede        Sede    @relation(fields: [sedeId], references: [id])
 
-  @@unique([sedeId, diaSemana])
+  @@index([sedeId, diaSemana])
   @@map("horarios_sede")
 }
 
