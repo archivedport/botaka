@@ -117,14 +117,22 @@ const apiHeaders = async () => ({
 });
 
 async function obtenerSlots(sedeSlug, especialidad) {
-  const fecha = new Date();
-  fecha.setDate(fecha.getDate() + 1);
-  const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
-    params:  { fecha: fecha.toISOString().slice(0, 10), especialidad, sede: sedeSlug },
-    headers: await apiHeaders(),
-    timeout: API_TIMEOUT,
-  });
-  return data.slots || [];
+  // Busca el próximo día con disponibilidad (hasta 14 días adelante)
+  for (let diasAdelante = 1; diasAdelante <= 14; diasAdelante++) {
+    const fecha = new Date();
+    fecha.setDate(fecha.getDate() + diasAdelante);
+    const fechaStr = fecha.toISOString().slice(0, 10);
+
+    const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
+      params:  { fecha: fechaStr, especialidad, sede: sedeSlug },
+      headers: await apiHeaders(),
+      timeout: API_TIMEOUT,
+    });
+
+    const slots = data.slots || [];
+    if (slots.length) return slots;
+  }
+  return [];
 }
 
 async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
