@@ -1,12 +1,7 @@
 // src/modules/calendar/calendar.service.js
 // ============================================================
 //  Motor de Calendario Propio (SQL + Redis Cache)
-//
-//  getAvailableSlots(fecha, especialidad, sedeSlug)
-//    → Calcula huecos libres a partir de horarios y citas existentes
-//
-//  createAppointment(data)
-//    → Crea la cita con bloqueo optimista para evitar colisiones
+//  v2 — Soporta múltiples bloques horarios por día (mañana + tarde)
 // ============================================================
 
 "use strict";
@@ -17,38 +12,45 @@ const { slotDuration, maxSlotsList } = require("../../config/env");
 
 // ── Utilidades de tiempo ─────────────────────────────────────
 
-/** "HH:MM" → minutos desde medianoche */
 function horaAMinutos(hhmm) {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
 }
 
-/** Minutos desde medianoche → "HH:MM" */
 function minutosAHora(minutos) {
   const h = Math.floor(minutos / 60);
   const m = minutos % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-/** Genera array de slots {inicio, fin} para un día dado el horario de la sede. */
-function generarSlotsDelDia(fecha, aperturaMinutos, cierreMinutos, duracion) {
+/**
+ * Genera slots para UN bloque horario (apertura → cierre).
+ * Usa UTC+offset para Colombia (UTC-5) para que las horas
+ * se guarden correctamente en la BD.
+ */
+function generarSlotsDeBloque(fecha, aperturaMinutos, cierreMinutos, duracion) {
   const slots = [];
-  for (let inicio = aperturaMinutos; inicio + duracion <= cierreMinutos; inicio += duracion) {
-    const fechaInicio = new Date(fecha);
-    const [anio, mes, dia] = fecha.split("-").map(Number);
-    fechaInicio.setFullYear(anio, mes - 1, dia);
-    fechaInicio.setHours(Math.floor(inicio / 60), inicio % 60, 0, 0);
+  const [anio, mes, dia] = fecha.split("-").map(Number);
+  const COLOMBIA_OFFSET = 5 * 60; // UTC-5 en minutos
 
-    const fechaFin = new Date(fechaInicio);
-    fechaFin.setMinutes(fechaFin.getMinutes() + duracion);
+  for (let inicio = aperturaMinutos; inicio + duracion <= cierreMinutos; inicio += duracion) {
+    // Construir en UTC compensando el offset de Colombia (UTC-5)
+    const inicioUTC = inicio + COLOMBIA_OFFSET;
+    const finUTC    = inicioUTC + duracion;
+
+    const fechaInicio = new Date(Date.UTC(anio, mes - 1, dia,
+      Math.floor(inicioUTC / 60), inicioUTC % 60, 0, 0));
+
+    const fechaFin = new Date(Date.UTC(anio, mes - 1, dia,
+      Math.floor(finUTC / 60), finUTC % 60, 0, 0));
 
     slots.push({
       inicio:    fechaInicio.toISOString(),
       fin:       fechaFin.toISOString(),
       inicioMin: inicio,
-      label:     `${new Date(fechaInicio).toLocaleDateString("es-CO", {
-                    weekday: "long", day: "numeric", month: "short",
-                  })} — ${minutosAHora(inicio)}`,
+      label: `${new Date(Date.UTC(anio, mes - 1, dia)).toLocaleDateString("es-CO", {
+        weekday: "long", day: "numeric", month: "short", timeZone: "America/Bogota",
+      })} — ${minutosAHora(inicio)}`,
     });
   }
   return slots;
@@ -56,21 +58,12 @@ function generarSlotsDelDia(fecha, aperturaMinutos, cierreMinutos, duracion) {
 
 // ── getAvailableSlots ────────────────────────────────────────
 
-/**
- * Calcula los slots disponibles para una fecha, especialidad y sede.
- *
- * @param {string} fecha        — "YYYY-MM-DD"
- * @param {string} especialidad — nombre de la especialidad
- * @param {string} sedeSlug     — slug de la sede
- * @returns {Array<{inicio, fin, label}>}
- */
 async function getAvailableSlots(fecha, especialidad, sedeSlug) {
-  // 1. Intentar caché de Redis
-  const cacheKey = `${sedeSlug}:${especialidad}:${fecha}`;
-  const cached   = await getSlotCache(sedeSlug, `${especialidad}:${fecha}`);
+  // 1. Caché Redis
+  const cached = await getSlotCache(sedeSlug, `${especialidad}:${fecha}`);
   if (cached) return cached;
 
-  // 2. Obtener sede y su horario para ese día de la semana
+  // 2. Sede y TODOS sus bloques horarios del día
   const sede = await prisma.sede.findUnique({
     where:   { slug: sedeSlug, activa: true },
     include: { horarios: true },
@@ -79,50 +72,54 @@ async function getAvailableSlots(fecha, especialidad, sedeSlug) {
   if (!sede) throw new Error(`Sede '${sedeSlug}' no encontrada o inactiva.`);
 
   const fechaObj  = new Date(`${fecha}T00:00:00`);
-  const diaSemana = fechaObj.getDay(); // 0=Dom
+  const diaSemana = fechaObj.getDay();
 
-  const horario = sede.horarios.find(h => h.diaSemana === diaSemana);
-  if (!horario) {
-    // Sin horario ese día (ej: domingo)
-    return [];
-  }
+  // CAMBIO v2: puede haber MÚLTIPLES bloques para el mismo día
+  const bloques = sede.horarios.filter(h => h.diaSemana === diaSemana);
 
-  const duracion        = horario.duracionSlot || slotDuration;
-  const aperturaMinutos = horaAMinutos(horario.apertura);
-  const cierreMinutos   = horaAMinutos(horario.cierre);
+  if (!bloques.length) return [];
 
-  // 3. Generar todos los slots posibles del día
-  const todosLosSlots = generarSlotsDelDia(fecha, aperturaMinutos, cierreMinutos, duracion);
+  // 3. Generar todos los slots de todos los bloques del día
+  const todosLosSlots = bloques.flatMap(bloque => {
+    const duracion = bloque.duracionSlot || slotDuration;
+    return generarSlotsDeBloque(
+      fecha,
+      horaAMinutos(bloque.apertura),
+      horaAMinutos(bloque.cierre),
+      duracion
+    );
+  });
 
-  // 4. Obtener citas ya existentes en ese rango (con 1 min de buffer)
-  const diaInicio = new Date(`${fecha}T00:00:00`);
-  const diaFin    = new Date(`${fecha}T23:59:59`);
+  // Ordenar por hora de inicio
+  todosLosSlots.sort((a, b) => a.inicioMin - b.inicioMin);
+
+  // 4. Citas ya ocupadas en ese día (en hora Colombia = UTC-5)
+  const [a, m, d] = fecha.split("-").map(Number);
+  const diaInicio = new Date(Date.UTC(a, m - 1, d, 5, 0, 0));   // 00:00 Colombia = 05:00 UTC
+  const diaFin    = new Date(Date.UTC(a, m - 1, d + 1, 4, 59, 59)); // 23:59 Colombia = 04:59 UTC siguiente día
 
   const citasOcupadas = await prisma.cita.findMany({
     where: {
-      sedeId:       sede.id,
+      sedeId:      sede.id,
       especialidad,
-      estado:       { in: ["PENDIENTE", "CONFIRMADA"] },
-      fechaInicio:  { gte: diaInicio, lt: diaFin },
+      estado:      { in: ["PENDIENTE", "CONFIRMADA"] },
+      fechaInicio: { gte: diaInicio, lt: diaFin },
     },
     select: { fechaInicio: true, fechaFin: true },
   });
 
-  // 5. Filtrar slots ocupados
+  // 5. Filtrar ocupados
   const slotsLibres = todosLosSlots.filter(slot => {
     const slotInicio = new Date(slot.inicio).getTime();
     const slotFin    = new Date(slot.fin).getTime();
-
     return !citasOcupadas.some(cita => {
       const citaInicio = new Date(cita.fechaInicio).getTime();
       const citaFin    = new Date(cita.fechaFin).getTime();
-      // Superposición: el slot empieza antes de que la cita termine
-      //                Y termina después de que la cita empiece
       return slotInicio < citaFin && slotFin > citaInicio;
     });
   });
 
-  // 6. Limpiar campo interno antes de devolver/cachear
+  // 6. Resultado final
   const resultado = slotsLibres
     .slice(0, maxSlotsList)
     .map(({ inicio, fin, label }) => ({ inicio, fin, label, sede: sede.nombre }));
@@ -135,26 +132,12 @@ async function getAvailableSlots(fecha, especialidad, sedeSlug) {
 
 // ── createAppointment ────────────────────────────────────────
 
-/**
- * Crea una cita con verificación de colisión en el mismo momento de escritura.
- * Usa una transacción serializable para garantizar atomicidad.
- *
- * @param {object} data
- * @param {string} data.pacienteId
- * @param {string} data.sedeSlug
- * @param {string} data.especialidad
- * @param {string} data.fechaInicio  — ISO string
- * @param {string} data.fechaFin     — ISO string
- * @param {string} [data.asesorId]
- * @param {string} [data.motivoConsulta]
- * @returns {object} Cita creada
- */
 async function createAppointment(data) {
   const { pacienteId, sedeSlug, especialidad, fechaInicio, fechaFin, asesorId, motivoConsulta } = data;
 
-  // Validar fechas
   const inicio = new Date(fechaInicio);
   const fin    = new Date(fechaFin);
+
   if (isNaN(inicio) || isNaN(fin) || inicio >= fin) {
     throw new Error("Fechas de cita inválidas.");
   }
@@ -165,17 +148,14 @@ async function createAppointment(data) {
   const sede = await prisma.sede.findUnique({ where: { slug: sedeSlug } });
   if (!sede) throw new Error(`Sede '${sedeSlug}' no encontrada.`);
 
-  // Transacción serializable → garantiza que nadie más insertó el mismo slot
-  // en los milisegundos que tardamos en verificar y crear.
   const cita = await prisma.$transaction(async (tx) => {
-    // Re-verificar disponibilidad dentro de la transacción
     const colision = await tx.cita.findFirst({
       where: {
         sedeId:      sede.id,
         especialidad,
         estado:      { in: ["PENDIENTE", "CONFIRMADA"] },
         AND: [
-          { fechaInicio: { lt: fin   } },
+          { fechaInicio: { lt: fin    } },
           { fechaFin:    { gt: inicio } },
         ],
       },
@@ -188,12 +168,12 @@ async function createAppointment(data) {
     return tx.cita.create({
       data: {
         pacienteId,
-        sedeId:        sede.id,
+        sedeId:         sede.id,
         especialidad,
-        fechaInicio:   inicio,
-        fechaFin:      fin,
-        estado:        "PENDIENTE",
-        asesorId:      asesorId || null,
+        fechaInicio:    inicio,
+        fechaFin:       fin,
+        estado:         "PENDIENTE",
+        asesorId:       asesorId || null,
         motivoConsulta: motivoConsulta || null,
       },
       include: {
@@ -201,12 +181,8 @@ async function createAppointment(data) {
         sede:     { select: { nombre: true } },
       },
     });
-  }, {
-    isolationLevel: "Serializable",
-    timeout:        5000,
-  });
+  }, { isolationLevel: "Serializable", timeout: 5000 });
 
-  // Invalidar caché de slots para esa sede/fecha
   const fechaStr = inicio.toISOString().slice(0, 10);
   await invalidarSlotCache(sedeSlug, `${especialidad}:${fechaStr}`);
 
@@ -227,7 +203,6 @@ async function cancelAppointment(citaId, usuarioId) {
     data:  { estado: "CANCELADA" },
   });
 
-  // Liberar el slot en caché
   const fecha = cita.fechaInicio.toISOString().slice(0, 10);
   const sede  = await prisma.sede.findUnique({ where: { id: cita.sedeId } });
   if (sede) await invalidarSlotCache(sede.slug, `${cita.especialidad}:${fecha}`);
