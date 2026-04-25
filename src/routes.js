@@ -39,6 +39,8 @@ router.post("/api/auth/change-password", requireAuth, authCtrl.changePassword);
 router.patch("/api/chat/toggle-status",  requireAuth, trackAcceso, chatCtrl.toggleStatus);
 router.get(  "/api/chat/status/:phone",  requireAuth, chatCtrl.getStatus);
 router.post( "/api/chat/send",           requireAuth, chatCtrl.sendMessage);
+router.get(  "/api/chat/history/:phone", requireAuth, chatCtrl.getHistory);
+router.post( "/api/chat/bot-message",    requireAuth, chatCtrl.saveBotMessage);
 
 // ── Calendario ────────────────────────────────────────────────
 router.get(    "/api/calendar/slots",                    requireAuth, calCtrl.getSlots);
@@ -46,7 +48,6 @@ router.post(   "/api/calendar/appointments",             requireAuth, calCtrl.cr
 router.get(    "/api/calendar/appointments/:pacienteId", requireAuth, calCtrl.getByPaciente);
 router.patch(  "/api/calendar/appointments/:id/status",  requireAuth, calCtrl.updateStatus);
 router.delete( "/api/calendar/appointments/:id",         requireAuth, calCtrl.cancelAppointment);
-router.get("/api/calendar/events", requireAuth, calCtrl.getEvents);
 
 // ── Documentos / IA ───────────────────────────────────────────
 router.post("/api/process-document",          requireAuth, docCtrl.processDocument);
