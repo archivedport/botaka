@@ -15,7 +15,7 @@ const { setChatStatus, getChatStatus, getChatAsesor } = require("../../config/re
 const { meta }      = require("../../config/env");
 const auditSvc      = require("../audit/audit.service");
 const { getIO }     = require("../../socket/socket");
-const { guardarMensaje, obtenerHistorial } = require("./messages.service");
+const { guardarMensaje, obtenerHistorial, obtenerUltimosMensajes } = require("./messages.service");
 
 // ── PATCH /api/chat/toggle-status ───────────────────────────
 //  Body: { phone, action: "TOMAR" | "LIBERAR" }
@@ -156,6 +156,18 @@ async function saveBotMessage(req, res) {
   }
 }
 
+// ── GET /api/chat/last-messages?phones=573...,573... ──────────
+async function getLastMessages(req, res) {
+  try {
+    const phones = (req.query.phones || '').split(',').filter(Boolean);
+    if (!phones.length) return res.json({ mensajes: {} });
+    const mapa = await obtenerUltimosMensajes(phones);
+    return res.json({ mensajes: mapa });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // ── GET /api/chat/history/:phone ─────────────────────────────
 async function getHistory(req, res) {
   try {
@@ -171,4 +183,4 @@ async function getHistory(req, res) {
   }
 }
 
-module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage };
+module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages };
