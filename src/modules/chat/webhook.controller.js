@@ -17,6 +17,7 @@ const { getChatStatus }      = require("../../config/redis");
 const { emitirMensajePaciente } = require("../../socket/socket");
 const { meta }               = require("../../config/env");
 const prisma                 = require("../../config/database");
+const { guardarMensaje }     = require("./messages.service");
 
 // Se inyecta handleBot desde bot.js al registrar las rutas
 let _handleBot = null;
@@ -104,6 +105,11 @@ async function handle(req, res) {
 
     // ── Determinar si el chat está en modo MANUAL ────────────
     const status = await getChatStatus(from);
+
+    // Guardar mensaje del paciente en BD
+    if (texto) {
+      await guardarMensaje({ phone: from, de: "PACIENTE", texto });
+    }
 
     if (status === "MANUAL") {
       // El bot está silenciado: redirigir al panel del asesor vía WebSocket
