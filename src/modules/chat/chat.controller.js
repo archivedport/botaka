@@ -189,8 +189,10 @@ async function saveBotMessage(req, res) {
         mensaje:   texto,
         timestamp: new Date().toISOString(),
       };
+      // Para quien tiene el chat abierto → dibuja la burbuja
       getIO().to(`chat:${phone}`).emit("chat:new_message", payload);
-      getIO().to("asesores").emit("chat:new_message", payload);
+      // Para todos los asesores → solo actualiza la lista
+      getIO().to("asesores").emit("chat:list_update", payload);
     } catch {}
 
     return res.json({ ok: true });
