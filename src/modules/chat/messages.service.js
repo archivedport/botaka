@@ -63,4 +63,31 @@ async function obtenerHistorial(phone, { page = 1, limit = 50 } = {}) {
   return { total, page, limit, mensajes };
 }
 
-module.exports = { guardarMensaje, obtenerHistorial };
+/**
+ * Obtiene el último mensaje de cada paciente (para la lista de chats).
+ */
+async function obtenerUltimosMensajes(phones) {
+  if (!phones.length) return {};
+  const pacientes = await prisma.paciente.findMany({
+    where: { phone: { in: phones } },
+    select: { id: true, phone: true },
+  });
+  const ids = pacientes.map(p => p.id);
+  // Subconsulta: último mensaje por paciente
+  const ultimos = await prisma.$queryRaw`
+    SELECT DISTINCT ON ("pacienteId")
+      "pacienteId", texto, "createdAt", de
+    FROM mensajes
+    WHERE "pacienteId" = ANY(${ids})
+    ORDER BY "pacienteId", "createdAt" DESC
+  `;
+  // Mapear por phone
+  const mapa = {};
+  for (const u of ultimos) {
+    const pac = pacientes.find(p => p.id === u.pacienteId);
+    if (pac) mapa[pac.phone] = { texto: u.texto, createdAt: u.createdAt, de: u.de };
+  }
+  return mapa;
+}
+
+module.exports = { guardarMensaje, obtenerHistorial, obtenerUltimosMensajes };
