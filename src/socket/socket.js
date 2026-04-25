@@ -114,12 +114,16 @@ function getIO() {
  */
 function emitirMensajePaciente(phone, texto, timestamp) {
   if (!io) return;
-  io.to(`chat:${phone}`).emit("chat:new_message", {
+  const payload = {
     phone,
     from:      "PACIENTE",
     mensaje:   texto,
     timestamp: timestamp || new Date().toISOString(),
-  });
+  };
+  // Emitir a la sala específica del chat (para quien está dentro)
+  io.to(`chat:${phone}`).emit("chat:new_message", payload);
+  // Emitir también a TODOS los asesores (para actualizar la lista en tiempo real)
+  io.to("asesores").emit("chat:new_message", payload);
 }
 
 /**
