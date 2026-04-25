@@ -120,10 +120,10 @@ function emitirMensajePaciente(phone, texto, timestamp) {
     mensaje:   texto,
     timestamp: timestamp || new Date().toISOString(),
   };
-  // Emitir a la sala específica del chat (para quien está dentro)
+  // Para quien tiene el chat abierto → dibuja la burbuja
   io.to(`chat:${phone}`).emit("chat:new_message", payload);
-  // Emitir también a TODOS los asesores (para actualizar la lista en tiempo real)
-  io.to("asesores").emit("chat:new_message", payload);
+  // Para todos los asesores → solo actualiza la lista (sin burbuja duplicada)
+  io.to("asesores").emit("chat:list_update", payload);
 }
 
 /**
