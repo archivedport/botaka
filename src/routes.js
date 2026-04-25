@@ -39,6 +39,7 @@ router.post("/api/auth/change-password", requireAuth, authCtrl.changePassword);
 router.patch("/api/chat/toggle-status",  requireAuth, trackAcceso, chatCtrl.toggleStatus);
 router.get(  "/api/chat/status/:phone",  requireAuth, chatCtrl.getStatus);
 router.post( "/api/chat/send",           requireAuth, chatCtrl.sendMessage);
+router.get(  "/api/chat/last-messages",   requireAuth, chatCtrl.getLastMessages);
 router.get(  "/api/chat/history/:phone", requireAuth, chatCtrl.getHistory);
 router.post( "/api/chat/bot-message",    requireAuth, chatCtrl.saveBotMessage);
 
