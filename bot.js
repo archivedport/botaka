@@ -988,6 +988,13 @@ async function handleBot(from, text, buttonId) {
       `Mientras esperas, puedes seguir enviando mensajes.`
     );
     await saveSession(from, { paso: "con_asesor", datos: { motivo } });
+
+    // Notificar al panel que este paciente solicita asesor
+    await axios.post(
+      `${API_BASE}/api/chat/request-asesor`,
+      { phone: from, motivo },
+      { headers: await apiHeaders(), timeout: 3000 }
+    ).catch(() => {});
     return;
   }
 
