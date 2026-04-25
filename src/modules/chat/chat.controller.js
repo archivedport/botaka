@@ -12,6 +12,7 @@
 
 const axios  = require("axios");
 const { setChatStatus, getChatStatus, getChatAsesor } = require("../../config/redis");
+const { setAsesorRequest, clearAsesorRequest, getPendingAsesorRequests } = require("../../config/redis");
 const { meta }      = require("../../config/env");
 const auditSvc      = require("../audit/audit.service");
 const { getIO }     = require("../../socket/socket");
@@ -31,6 +32,9 @@ async function toggleStatus(req, res) {
     const asesorId    = action === "TOMAR" ? req.usuario.id : null;
 
     await setChatStatus(phone, nuevoEstado, asesorId);
+
+    // Si toma control, limpiar solicitud pendiente
+    if (action === "TOMAR") await clearAsesorRequest(phone);
 
     // Notificar a la sala WebSocket del asesor
     const io = getIO();
@@ -131,11 +135,13 @@ async function sendMessage(req, res) {
 }
 
 // ── POST /api/chat/request-asesor ───────────────────────────
-//  El bot notifica que un paciente solicita hablar con asesor.
 async function requestAsesor(req, res) {
   try {
     const { phone, motivo } = req.body;
     if (!phone) return res.status(400).json({ error: "phone requerido." });
+
+    // Persistir en Redis para que sobreviva recargas
+    await setAsesorRequest(phone, motivo || "");
 
     const paciente = await require("../../config/database").paciente
       .findUnique({ where: { phone }, select: { nombre: true } })
@@ -152,6 +158,16 @@ async function requestAsesor(req, res) {
     } catch {}
 
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ── GET /api/chat/pending-asesor — solicitudes pendientes ─────
+async function getPendingAsesor(req, res) {
+  try {
+    const pendientes = await getPendingAsesorRequests();
+    return res.json({ pendientes });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -210,4 +226,4 @@ async function getHistory(req, res) {
   }
 }
 
-module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages, requestAsesor };
+module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages, requestAsesor, getPendingAsesor };
