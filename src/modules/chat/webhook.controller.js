@@ -106,16 +106,15 @@ async function handle(req, res) {
     // ── Determinar si el chat está en modo MANUAL ────────────
     const status = await getChatStatus(from);
 
-    // Guardar mensaje del paciente en BD
+    // ── Guardar y emitir mensaje del paciente SIEMPRE ───────────
     if (texto) {
       await guardarMensaje({ phone: from, de: "PACIENTE", texto });
     }
+    // Emitir al panel en tiempo real sin importar el modo
+    emitirMensajePaciente(from, texto || `[${tipo}]`, timestamp);
 
     if (status === "MANUAL") {
-      // El bot está silenciado: redirigir al panel del asesor vía WebSocket
-      emitirMensajePaciente(from, texto || `[${tipo}]`, timestamp);
-
-      // Si llega una imagen/documento en modo MANUAL, procesar con IA automáticamente
+      // Si llega una imagen/documento en modo MANUAL, procesar con IA
       if (mediaId) {
         procesarDocumentoAutomatico(from, mediaId).catch(err =>
           console.error("Error auto-procesando documento:", err.message)
@@ -125,6 +124,9 @@ async function handle(req, res) {
     }
 
     // ── Modo BOT: pasar al handler del bot ────────────────────
+    const { manejarRespuestaConfirmacion } = require("../jobs/reminders");
+    if (buttonId && await manejarRespuestaConfirmacion(from, buttonId)) return;
+
     if (_handleBot) {
       await _handleBot(from, texto, buttonId);
     }
