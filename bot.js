@@ -60,6 +60,12 @@ async function sendText(to, body) {
       { messaging_product: "whatsapp", to, type: "text", text: { body, preview_url: false } },
       { headers: WA_HEADERS }
     );
+    // Guardar mensaje del bot en BD
+    await axios.post(
+      `${API_BASE}/api/chat/bot-message`,
+      { phone: to, texto: body },
+      { headers: await apiHeaders(), timeout: 3000 }
+    ).catch(() => {}); // silencioso si falla
   } catch (e) {
     console.error("❌ sendText:", e.response?.data || e.message);
   }
