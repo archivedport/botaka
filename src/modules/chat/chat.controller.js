@@ -27,7 +27,7 @@ async function toggleStatus(req, res) {
       return res.status(400).json({ error: "phone y action (TOMAR|LIBERAR) son obligatorios." });
     }
 
-    const nuevoEstado = action === "TOMAR" ? "MANUAL" : "BOT";
+      const nuevoEstado = action === "TOMAR" ? "MANUAL" : "BOT";
     const asesorId    = action === "TOMAR" ? req.usuario.id : null;
 
     await setChatStatus(phone, nuevoEstado, asesorId);
@@ -130,6 +130,33 @@ async function sendMessage(req, res) {
   }
 }
 
+// ── POST /api/chat/request-asesor ───────────────────────────
+//  El bot notifica que un paciente solicita hablar con asesor.
+async function requestAsesor(req, res) {
+  try {
+    const { phone, motivo } = req.body;
+    if (!phone) return res.status(400).json({ error: "phone requerido." });
+
+    const paciente = await require("../../config/database").paciente
+      .findUnique({ where: { phone }, select: { nombre: true } })
+      .catch(() => null);
+
+    try {
+      const { getIO } = require("../../socket/socket");
+      getIO().to("asesores").emit("chat:asesor_solicitado", {
+        phone,
+        nombre: paciente?.nombre || null,
+        motivo: motivo || null,
+        timestamp: new Date().toISOString(),
+      });
+    } catch {}
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // ── POST /api/chat/bot-message (interno, llamado desde bot.js) ─
 async function saveBotMessage(req, res) {
   try {
@@ -183,4 +210,4 @@ async function getHistory(req, res) {
   }
 }
 
-module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages };
+module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages, requestAsesor };
