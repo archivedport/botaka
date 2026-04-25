@@ -15,6 +15,7 @@ const { setChatStatus, getChatStatus, getChatAsesor } = require("../../config/re
 const { meta }      = require("../../config/env");
 const auditSvc      = require("../audit/audit.service");
 const { getIO }     = require("../../socket/socket");
+const { guardarMensaje, obtenerHistorial } = require("./messages.service");
 
 // ── PATCH /api/chat/toggle-status ───────────────────────────
 //  Body: { phone, action: "TOMAR" | "LIBERAR" }
@@ -108,6 +109,9 @@ async function sendMessage(req, res) {
       { headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" } }
     );
 
+    // Guardar mensaje del asesor en BD
+    await guardarMensaje({ phone, de: "ASESOR", texto: mensaje.trim(), asesorId: req.usuario.id });
+
     // Emitir al WebSocket para que el panel muestre el mensaje enviado
     const io = getIO();
     io.to(`chat:${phone}`).emit("chat:message_sent", {
@@ -126,4 +130,31 @@ async function sendMessage(req, res) {
   }
 }
 
-module.exports = { toggleStatus, getStatus, sendMessage };
+// ── POST /api/chat/bot-message (interno, llamado desde bot.js) ─
+async function saveBotMessage(req, res) {
+  try {
+    const { phone, texto } = req.body;
+    if (!phone || !texto) return res.status(400).json({ error: "phone y texto requeridos." });
+    await guardarMensaje({ phone, de: "BOT", texto });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ── GET /api/chat/history/:phone ─────────────────────────────
+async function getHistory(req, res) {
+  try {
+    const { phone } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+    const result = await obtenerHistorial(phone, {
+      page:  parseInt(page),
+      limit: parseInt(limit),
+    });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage };
