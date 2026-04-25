@@ -140,12 +140,14 @@ async function saveBotMessage(req, res) {
     // Emitir al panel en tiempo real
     try {
       const { getIO } = require("../../socket/socket");
-      getIO().to(`chat:${phone}`).emit("chat:new_message", {
+      const payload = {
         phone,
         from:      "BOT",
         mensaje:   texto,
         timestamp: new Date().toISOString(),
-      });
+      };
+      getIO().to(`chat:${phone}`).emit("chat:new_message", payload);
+      getIO().to("asesores").emit("chat:new_message", payload);
     } catch {}
 
     return res.json({ ok: true });
