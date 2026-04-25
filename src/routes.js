@@ -41,6 +41,7 @@ router.get(  "/api/chat/status/:phone",  requireAuth, chatCtrl.getStatus);
 router.post( "/api/chat/send",           requireAuth, chatCtrl.sendMessage);
 router.get(  "/api/chat/last-messages",   requireAuth, chatCtrl.getLastMessages);
 router.get(  "/api/chat/history/:phone", requireAuth, chatCtrl.getHistory);
+router.post( "/api/chat/request-asesor",  requireAuth, chatCtrl.requestAsesor);
 router.post( "/api/chat/bot-message",    requireAuth, chatCtrl.saveBotMessage);
 
 // ── Calendario ────────────────────────────────────────────────
