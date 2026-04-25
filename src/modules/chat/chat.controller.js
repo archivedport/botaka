@@ -136,6 +136,18 @@ async function saveBotMessage(req, res) {
     const { phone, texto } = req.body;
     if (!phone || !texto) return res.status(400).json({ error: "phone y texto requeridos." });
     await guardarMensaje({ phone, de: "BOT", texto });
+
+    // Emitir al panel en tiempo real
+    try {
+      const { getIO } = require("../../socket/socket");
+      getIO().to(`chat:${phone}`).emit("chat:new_message", {
+        phone,
+        from:      "BOT",
+        mensaje:   texto,
+        timestamp: new Date().toISOString(),
+      });
+    } catch {}
+
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
