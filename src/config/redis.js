@@ -25,6 +25,7 @@ redis.on("close",     ()  => console.warn("⚠️  Redis conexión cerrada"));
 const KEY = {
   chatStatus:    (phone)  => `ips:chat:status:${phone}`,      // BOT | MANUAL
   chatAsesor:    (phone)  => `ips:chat:asesor:${phone}`,      // asesorId activo
+  chatAsesorReq: (phone)  => `ips:chat:asesor_req:${phone}`,  // solicitud pendiente
   slotCache:     (sedeSlug, fecha) => `ips:slots:${sedeSlug}:${fecha}`,
   slotSel:       (phone)  => `ips:slots:sel:${phone}`,        // slots en selección
   session:       (phone)  => `ips:session:${phone}`,
@@ -131,6 +132,33 @@ async function clearSlotSelection(phone) {
   await redis.del(KEY.slotSel(phone));
 }
 
+// ── Helpers de solicitud de asesor ────────────────────────────
+
+async function setAsesorRequest(phone, motivo) {
+  await redis.set(KEY.chatAsesorReq(phone), motivo || "sin motivo");
+}
+
+async function getAsesorRequest(phone) {
+  return redis.get(KEY.chatAsesorReq(phone));
+}
+
+async function clearAsesorRequest(phone) {
+  await redis.del(KEY.chatAsesorReq(phone));
+}
+
+/**
+ * Devuelve todos los phones que tienen solicitud de asesor pendiente.
+ */
+async function getPendingAsesorRequests() {
+  const keys = await redis.keys("ips:chat:asesor_req:*");
+  if (!keys.length) return [];
+  const values = await redis.mget(...keys);
+  return keys.map((k, i) => ({
+    phone:  k.replace("ips:chat:asesor_req:", ""),
+    motivo: values[i],
+  }));
+}
+
 module.exports = {
   redis,
   KEY,
@@ -147,4 +175,8 @@ module.exports = {
   saveSlotSelection,
   getSlotSelection,
   clearSlotSelection,
+  setAsesorRequest,
+  getAsesorRequest,
+  clearAsesorRequest,
+  getPendingAsesorRequests,
 };
