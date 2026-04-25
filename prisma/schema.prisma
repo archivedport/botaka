@@ -93,8 +93,25 @@ model Paciente {
   // Relaciones
   citas           Cita[]
   logsIA          LogIA[]
+  mensajes        Mensaje[]
 
   @@map("pacientes")
+}
+
+// ── Modelo: Mensajes de chat ─────────────────────────────────
+
+model Mensaje {
+  id         String   @id @default(cuid())
+  pacienteId String
+  de         String   // PACIENTE | BOT | ASESOR
+  asesorId   String?  // Solo si de === ASESOR
+  texto      String
+  createdAt  DateTime @default(now())
+
+  paciente   Paciente @relation(fields: [pacienteId], references: [id])
+
+  @@index([pacienteId, createdAt])
+  @@map("mensajes")
 }
 
 // ── Modelo: Sede ─────────────────────────────────────────────
