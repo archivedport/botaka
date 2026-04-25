@@ -124,8 +124,10 @@ async function handle(req, res) {
     }
 
     // ── Modo BOT: pasar al handler del bot ────────────────────
-    const { manejarRespuestaConfirmacion } = require("../jobs/reminders");
-    if (buttonId && await manejarRespuestaConfirmacion(from, buttonId)) return;
+    try {
+      const { manejarRespuestaConfirmacion } = require("../jobs/reminders");
+      if (buttonId && await manejarRespuestaConfirmacion(from, buttonId)) return;
+    } catch(e) { /* reminders.js aún no disponible */ }
 
     if (_handleBot) {
       await _handleBot(from, texto, buttonId);
