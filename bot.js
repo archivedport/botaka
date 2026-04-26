@@ -88,6 +88,17 @@ async function sendButtons(to, { header, body, footer, buttons }) {
       },
       { headers: WA_HEADERS }
     );
+    // Guardar en historial — construir texto legible con header + body + opciones
+    const textoGuardar = [
+      header ? `*${header}*` : null,
+      body,
+      buttons.map(b => `› ${b.title}`).join("\n"),
+    ].filter(Boolean).join("\n");
+    await axios.post(
+      `${API_BASE}/api/chat/bot-message`,
+      { phone: to, texto: textoGuardar },
+      { headers: await apiHeaders(), timeout: 3000 }
+    ).catch(() => {});
   } catch (e) {
     console.error("❌ sendButtons:", e.response?.data || e.message);
   }
@@ -108,6 +119,20 @@ async function sendList(to, { header, body, footer, buttonLabel, sections }) {
       },
       { headers: WA_HEADERS }
     );
+    // Guardar en historial — header + body + opciones de todas las secciones
+    const opciones = sections.flatMap(s =>
+      s.rows.map(r => `› ${r.title}${r.description ? ` — ${r.description}` : ""}`)
+    ).join("\n");
+    const textoGuardar = [
+      header ? `*${header}*` : null,
+      body,
+      opciones,
+    ].filter(Boolean).join("\n");
+    await axios.post(
+      `${API_BASE}/api/chat/bot-message`,
+      { phone: to, texto: textoGuardar },
+      { headers: await apiHeaders(), timeout: 3000 }
+    ).catch(() => {});
   } catch (e) {
     console.error("❌ sendList:", e.response?.data || e.message);
   }
