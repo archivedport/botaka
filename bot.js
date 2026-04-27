@@ -172,32 +172,37 @@ async function obtenerSlotsParaFecha(sedeSlug, especialidad, fechaStr) {
  * @returns {Array<{fechaStr, label, slots}>}
  */
 async function obtenerDiasDisponibles(sedeSlug, especialidad, maxDias = 10) {
-  // Fecha de hoy en Colombia (evita bug de UTC vs Colombia a final del día)
+  // Fecha de hoy en Colombia usando aritmética UTC pura (sin locale)
   const hoyStr = fechaColombiaStr(new Date());
-  const [hy, hm, hd] = hoyStr.split("-").map(Number);
-  const hoy = new Date(hy, hm - 1, hd);
 
-  // Generar candidatos: hasta 90 días hábiles hacia adelante
+  // Medianoche Colombia = 05:00 UTC (UTC-5)
+  const [hy, hm, hd] = hoyStr.split("-").map(Number);
+  const hoyUTC = Date.UTC(hy, hm - 1, hd, 5, 0, 0); // 00:00 Colombia en UTC
+
+  // Generar candidatos: días hábiles (L-V) a partir de mañana
+  // Máximo 60 candidatos para no tardar demasiado (2-3 meses laborales)
   const candidatos = [];
-  for (let i = 1; candidatos.length < 90 && i <= 180; i++) {
-    const cursor = new Date(hoy);
-    cursor.setDate(hoy.getDate() + i);
-    const dow = cursor.getDay(); // 0=Dom, 6=Sab
-    if (dow === 0 || dow === 6) continue; // saltar fines de semana
-    candidatos.push(cursor.toLocaleDateString("en-CA")); // YYYY-MM-DD
+  for (let i = 1; candidatos.length < 60; i++) {
+    const cursorUTC = hoyUTC + i * 24 * 60 * 60 * 1000;
+    const cursor    = new Date(cursorUTC);
+    const dow       = cursor.getUTCDay(); // getUTCDay porque el objeto es UTC
+    if (dow === 0 || dow === 6) continue; // saltar sábado y domingo
+    candidatos.push(toYMD(cursor));       // "YYYY-MM-DD" sin depender de locale
   }
 
   const resultado = [];
 
-  // Consultar en lotes de 10 en paralelo — mucho más rápido que secuencial
-  for (let i = 0; i < candidatos.length && resultado.length < maxDias; i += 10) {
-    const lote = candidatos.slice(i, i + 10);
+  // Consultar en lotes de 5 en paralelo (equilibrio entre velocidad y carga)
+  const LOTE = 5;
+  for (let i = 0; i < candidatos.length && resultado.length < maxDias; i += LOTE) {
+    const lote = candidatos.slice(i, i + LOTE);
     const respuestas = await Promise.all(
       lote.map(async fechaStr => {
         try {
           const slots = await obtenerSlotsParaFecha(sedeSlug, especialidad, fechaStr);
           return { fechaStr, slots };
-        } catch {
+        } catch (err) {
+          console.warn(`⚠️ Slots ${fechaStr}:`, err.response?.data || err.message);
           return { fechaStr, slots: [] };
         }
       })
@@ -345,8 +350,12 @@ const ESP_CORTA = {
   "Especialistas":    "Especialista",
 };
 
-// ── Zona horaria Colombia (UTC-5) ─────────────────────────────
-// SIEMPRE se especifica explícitamente para que funcione en Railway (UTC)
+// ══════════════════════════════════════════════════════════════
+// UTILIDADES DE FECHA — Colombia (UTC-5)
+// IMPORTANTE: Railway corre en UTC. Nunca usamos toLocaleDateString
+// sin timeZone explícito porque el resultado depende del locale del SO
+// y puede ser incorrecto en entornos con ICU mínimo.
+// ══════════════════════════════════════════════════════════════
 
 function fmtFecha(iso) {
   if (!iso) return "—";
@@ -364,27 +373,67 @@ function fmtHora(iso) {
   });
 }
 
-// Devuelve "YYYY-MM-DD" en zona horaria Colombia
-// new Date().toISOString() devuelve UTC y puede ser un día diferente al de Colombia
+/**
+ * Devuelve "YYYY-MM-DD" en zona horaria Colombia (UTC-5).
+ * Usa aritmética UTC pura — sin depender de locale ni toLocaleDateString.
+ * Ejemplo: si son las 23:30 UTC del 27, en Colombia son las 18:30 del 27 → "2026-04-27"
+ */
 function fechaColombiaStr(date) {
-  return date.toLocaleDateString("en-CA", { timeZone: "America/Bogota" }); // en-CA = YYYY-MM-DD
+  const COL_OFFSET_MS = 5 * 60 * 60 * 1000; // UTC-5
+  const col = new Date(date.getTime() - COL_OFFSET_MS);
+  return col.toISOString().slice(0, 10); // siempre YYYY-MM-DD
 }
 
-// Etiqueta legible para un día: "lunes 27 abr."
+/**
+ * Crea un objeto Date que representa medianoche local Colombia para fechaStr.
+ * fechaStr: "YYYY-MM-DD"
+ */
+function parseFechaStr(fechaStr) {
+  const [y, m, d] = fechaStr.split("-").map(Number);
+  // Medianoche Colombia = 05:00 UTC (UTC-5)
+  return new Date(Date.UTC(y, m - 1, d, 5, 0, 0));
+}
+
+/**
+ * Formatea una fecha YYYY-MM-DD como texto legible en español.
+ * Usa el objeto Date directamente para evitar locale de SO.
+ * Resultado: "lunes 27 abr."
+ */
 function labelFecha(fechaStr) {
-  const [y, m, d] = fechaStr.split("-").map(Number);
-  const fecha = new Date(y, m - 1, d, 12); // mediodía evita edge cases de DST
-  const dia  = fecha.toLocaleDateString("es-CO", { weekday: "long" });
-  const rest = fecha.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
-  return `${dia} ${rest}`;
+  const date = parseFechaStr(fechaStr);
+  const dias  = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+  const meses = ["ene.","feb.","mar.","abr.","may.","jun.",
+                 "jul.","ago.","sep.","oct.","nov.","dic."];
+  // getUTC* porque parseFechaStr usa UTC
+  const dow = date.getUTCDay();
+  const d   = date.getUTCDate();
+  const mo  = date.getUTCMonth();
+  return `${dias[dow]} ${d} ${meses[mo]}`;
 }
 
-// Etiqueta larga para confirmaciones: "lunes 27 de abril de 2026"
+/**
+ * Etiqueta larga para confirmaciones: "lunes 27 de abril de 2026"
+ */
 function labelFechaLarga(fechaStr) {
-  const [y, m, d] = fechaStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 12).toLocaleDateString("es-CO", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric",
-  });
+  const date = parseFechaStr(fechaStr);
+  const dias  = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+  const meses = ["enero","febrero","marzo","abril","mayo","junio",
+                 "julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const dow = date.getUTCDay();
+  const d   = date.getUTCDate();
+  const mo  = date.getUTCMonth();
+  const y   = date.getUTCFullYear();
+  return `${dias[dow]} ${d} de ${meses[mo]} de ${y}`;
+}
+
+/**
+ * Construye "YYYY-MM-DD" de forma segura sin depender de locale.
+ */
+function toYMD(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 /* ============================================================
@@ -1076,8 +1125,9 @@ async function handleBot(from, text, buttonId) {
     }
 
     const slots = await getSlotSelection(from);
-    if (!slots || !Array.isArray(slots) || slots[0]?.fechaStr) {
-      // Expiró o son datos de días (no de slots) — volver a fechas
+    // Si expiró, o si los datos de Redis son la lista de días (no slots),
+    // volver al paso de selección de fecha
+    if (!slots || !Array.isArray(slots) || slots.length === 0 || slots[0]?.fechaStr) {
       await sendText(from, "⏱️ Los horarios expiraron. Selecciona el día de nuevo:");
       await saveSession(from, { paso: "cita_fecha", datos: { ...sesion.datos, fechaStr: undefined } });
       await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
