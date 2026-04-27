@@ -13,6 +13,7 @@
 
 "use strict";
 
+const axios = require("axios");
 const { getChatStatus }      = require("../../config/redis");
 const { emitirMensajePaciente } = require("../../socket/socket");
 const { meta }               = require("../../config/env");
@@ -144,29 +145,109 @@ async function handle(req, res) {
   }
 }
 
+// ── Helper: enviar mensaje WhatsApp de texto ────────────────
+//  Versión local para el webhook (evita importar bot.js que
+//  causaría dependencia circular)
+async function sendWAFeedback(to, body) {
+  try {
+    await axios.post(
+      `${meta.baseUrl()}/${meta.phoneId}/messages`,
+      { messaging_product: "whatsapp", to, type: "text", text: { body, preview_url: false } },
+      { headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" }, timeout: 8000 }
+    );
+  } catch (e) {
+    console.error("⚠️ WA quality feedback:", e.response?.data || e.message);
+  }
+}
+
 // ── Procesamiento automático de documentos ───────────────────
+//
+//  Flujo con control de calidad IA:
+//    1. Descargar imagen de Meta
+//    2. Gemini verifica si la imagen es legible (prompt ligero)
+//       • No legible → avisar al paciente y detener
+//       • Legible    → continuar con extracción completa
+//    3. Extraer datos (reutiliza la imagen ya descargada)
+//    4. Emitir evento Socket.io a los asesores
+//
 async function procesarDocumentoAutomatico(phone, mediaId) {
-  const { procesarDocumento } = require("../documents/documents.service");
-  const { emitirMensajePaciente: emit, getIO } = require("../../socket/socket");
+  const {
+    descargarMediaMeta,
+    verificarCalidadDocumento,
+    procesarDocumento,
+  } = require("../documents/documents.service");
+  const { getIO } = require("../../socket/socket");
 
   const paciente = await prisma.paciente.findUnique({ where: { phone } });
 
-  const resultado = await procesarDocumento({
-    mediaId,
-    pacienteId: paciente?.id || null,
-    asesorId:   null,
-  });
+  // ── PASO 1: descargar imagen ─────────────────────────────
+  let base64, mimeType;
+  try {
+    ({ base64, mimeType } = await descargarMediaMeta(mediaId));
+  } catch (err) {
+    console.error("❌ Error descargando media:", err.message);
+    return;
+  }
 
-  // Notificar a asesores del nuevo documento procesado
-  const io = getIO();
-  io.to("asesores").emit("documento:procesado", {
-    phone,
-    logId:     resultado.logId,
-    datos:     resultado.datos,
-    confianza: resultado.confianza,
-    requiereValidacion: resultado.requiereValidacion,
-    timestamp: new Date().toISOString(),
-  });
+  // ── PASO 2: verificar calidad con Gemini ─────────────────
+  const calidad = await verificarCalidadDocumento(base64, mimeType);
+
+  if (!calidad.legible) {
+    console.log(`📷 Documento ilegible para ${phone}: ${calidad.problema}`);
+
+    await sendWAFeedback(phone,
+      `📷 *Imagen recibida*
+
+` +
+      `Tu imagen no pudo ser procesada correctamente.
+
+` +
+      `*Motivo:* _${calidad.problema || "La imagen no es suficientemente clara."}_
+
+` +
+      `Por favor envía de nuevo la foto con:
+` +
+      `• Buena iluminación 💡
+` +
+      `• Sin borrosidad ni movimiento
+` +
+      `• Todo el documento visible en el encuadre
+` +
+      `• Sobre una superficie plana y oscura
+
+` +
+      `_Cuando tengas la foto lista, solo envíala y la procesaremos automáticamente._ 📸`
+    );
+    return; // No procesar más — esperar que reenvíe
+  }
+
+  // ── PASO 3: extracción completa (reutiliza base64 ya descargado) ──
+  let resultado;
+  try {
+    resultado = await procesarDocumento({
+      mediaId,
+      base64,
+      mimeType,
+      pacienteId: paciente?.id || null,
+      asesorId:   null,
+    });
+  } catch (err) {
+    console.error("❌ Error procesando documento:", err.message);
+    return;
+  }
+
+  // ── PASO 4: notificar a asesores ─────────────────────────
+  try {
+    const io = getIO();
+    io.to("asesores").emit("documento:procesado", {
+      phone,
+      logId:              resultado.logId,
+      datos:              resultado.datos,
+      confianza:          resultado.confianza,
+      requiereValidacion: resultado.requiereValidacion,
+      timestamp:          new Date().toISOString(),
+    });
+  } catch {}
 }
 
 module.exports = { verify, handle, setHandleBot };
