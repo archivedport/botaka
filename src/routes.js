@@ -16,6 +16,7 @@ const calCtrl      = require("./modules/calendar/calendar.controller");
 const docCtrl      = require("./modules/documents/documents.controller");
 const patCtrl      = require("./modules/patients/patients.controller");
 const auditSvc     = require("./modules/audit/audit.service");
+const solCtrl      = require("./modules/solicitudes/solicitudes.controller");
 
 const router = Router();
 
@@ -46,11 +47,17 @@ router.get(  "/api/chat/pending-asesor",  requireAuth, chatCtrl.getPendingAsesor
 router.post( "/api/chat/bot-message",    requireAuth, chatCtrl.saveBotMessage);
 
 // ── Calendario ────────────────────────────────────────────────
+router.get(    "/api/calendar/events",               requireAuth, calCtrl.getEvents);
 router.get(    "/api/calendar/slots",                    requireAuth, calCtrl.getSlots);
 router.post(   "/api/calendar/appointments",             requireAuth, calCtrl.createAppointment);
 router.get(    "/api/calendar/appointments/:pacienteId", requireAuth, calCtrl.getByPaciente);
 router.patch(  "/api/calendar/appointments/:id/status",  requireAuth, calCtrl.updateStatus);
 router.delete( "/api/calendar/appointments/:id",         requireAuth, calCtrl.cancelAppointment);
+
+// ── Solicitudes de citas (aprobación/denegación) ────────────
+router.get(   "/api/solicitudes",              requireAuth, solCtrl.list);
+router.patch( "/api/solicitudes/:id/aprobar",  requireAuth, solCtrl.aprobar);
+router.patch( "/api/solicitudes/:id/denegar",  requireAuth, solCtrl.denegar);
 
 // ── Documentos / IA ───────────────────────────────────────────
 router.post("/api/process-document",          requireAuth, docCtrl.processDocument);
