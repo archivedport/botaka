@@ -35,6 +35,28 @@ Extrae los datos y responde ÚNICAMENTE con un JSON válido sin bloques de códi
 Si no puedes leer un campo, usa null. El campo confianza va de 0.0 a 1.0.
 No incluyas texto fuera del JSON.`;
 
+// ── Prompt de control de calidad ─────────────────────────────
+// Gemini evalúa si la imagen es procesable ANTES de hacer la
+// extracción completa. Evita pasar imágenes borrosas o inválidas
+// al pipeline de IA y ahorra tokens y tiempo.
+
+const QUALITY_PROMPT = `Analiza esta imagen y determina si es lo suficientemente clara y legible para extraer datos de un documento colombiano (cédula, carnet EPS, orden médica, resultado de laboratorio, etc.).
+
+Responde ÚNICAMENTE con un JSON válido, sin bloques de código ni texto adicional:
+{
+  "legible": true o false,
+  "tipo": "cédula | carnet_eps | orden_medica | resultado_lab | foto_personal | no_documento | otro",
+  "problema": "descripción breve del problema en español, o null si está legible"
+}
+
+Considera NO legible si:
+- Está borrosa o desenfocada
+- Muy oscura o sobreexpuesta
+- El documento está cortado (faltan bordes)
+- El ángulo es mayor a 30° (muy inclinada)
+- La resolución no permite leer texto
+- No es un documento (foto de persona, paisaje, etc.)`;
+
 // ── Descargar media de Meta ───────────────────────────────────
 
 async function descargarMediaMeta(mediaId) {
@@ -108,6 +130,44 @@ function parsearRespuesta(texto) {
 // ── Función principal ─────────────────────────────────────────
 
 /**
+ * Verifica la calidad de una imagen antes de procesarla.
+ * Llama a Gemini con un prompt ligero (más rápido y barato que la extracción completa).
+ *
+ * @param {string} base64   — imagen en base64
+ * @param {string} mimeType — tipo MIME (image/jpeg, etc.)
+ * @returns {{ legible: boolean, tipo: string, problema: string|null }}
+ */
+async function verificarCalidadDocumento(base64, mimeType) {
+  try {
+    const GEMINI_URL =
+      `https://generativelanguage.googleapis.com/v1beta/models/${gemini.model}:generateContent?key=${gemini.apiKey}`;
+
+    const payload = {
+      contents: [{
+        parts: [
+          { text: QUALITY_PROMPT },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ],
+      }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
+    };
+
+    const res  = await axios.post(GEMINI_URL, payload, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 15000,
+    });
+
+    const texto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    // Reutilizar parsearRespuesta que ya maneja el JSON limpio correctamente
+    return parsearRespuesta(texto);
+  } catch (err) {
+    // Si falla la verificación, asumir legible para no bloquear al paciente
+    console.warn("⚠️ verificarCalidad falló, asumiendo legible:", err.message);
+    return { legible: true, tipo: "desconocido", problema: null };
+  }
+}
+
+/**
  * Procesa un documento recibido por WhatsApp.
  *
  * @param {object} opts
@@ -116,9 +176,16 @@ function parsearRespuesta(texto) {
  * @param {string}  [opts.asesorId]
  * @returns {object} { logId, datos, confianza }
  */
-async function procesarDocumento({ mediaId, pacienteId, asesorId }) {
-  // 1. Descargar imagen de Meta
-  const { base64, mimeType } = await descargarMediaMeta(mediaId);
+async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, pacienteId, asesorId }) {
+  // 1. Descargar imagen de Meta (solo si no se pasó ya descargada)
+  //    Cuando viene de procesarDocumentoAutomatico ya tenemos los datos,
+  //    así evitamos descargar dos veces la misma imagen.
+  let base64 = b64, mimeType = mt;
+  if (!base64) {
+    const dl  = await descargarMediaMeta(mediaId);
+    base64    = dl.base64;
+    mimeType  = dl.mimeType;
+  }
 
   // 2. Analizar con Gemini
   const textoGemini = await analizarConGemini(base64, mimeType);
@@ -194,4 +261,4 @@ async function validarDocumento({ logId, asesorId, datosValidados, actualizarPac
   return { ok: true, logId };
 }
 
-module.exports = { procesarDocumento, validarDocumento };
+module.exports = { procesarDocumento, validarDocumento, verificarCalidadDocumento, descargarMediaMeta };
