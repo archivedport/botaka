@@ -589,7 +589,7 @@ async function enviarFechas(to, sedeNombre, especialidad) {
     footer:      "Días hábiles con horarios libres",
     buttonLabel: "Ver días",
     sections: [{
-      title: "Próximos días disponibles",
+      title: "Días disponibles",
       rows:  dias.map((d, i) => ({
         id:          `fecha_${i}`,
         title:       d.label.slice(0, 24),
