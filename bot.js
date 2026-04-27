@@ -147,23 +147,69 @@ const apiHeaders = async () => ({
   "Content-Type": "application/json",
 });
 
-async function obtenerSlots(sedeSlug, especialidad) {
-  // Busca el próximo día con disponibilidad (hasta 14 días adelante)
-  for (let diasAdelante = 1; diasAdelante <= 14; diasAdelante++) {
-    const fecha = new Date();
-    fecha.setDate(fecha.getDate() + diasAdelante);
-    const fechaStr = fecha.toISOString().slice(0, 10);
+// Consulta los slots disponibles para UNA fecha exacta (YYYY-MM-DD)
+async function obtenerSlotsParaFecha(sedeSlug, especialidad, fechaStr) {
+  const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
+    params:  { fecha: fechaStr, especialidad, sede: sedeSlug },
+    headers: await apiHeaders(),
+    timeout: API_TIMEOUT,
+  });
+  return data.slots || [];
+}
 
-    const { data } = await axios.get(`${API_BASE}/api/calendar/slots`, {
-      params:  { fecha: fechaStr, especialidad, sede: sedeSlug },
-      headers: await apiHeaders(),
-      timeout: API_TIMEOUT,
-    });
+/**
+ * Busca los próximos días hábiles con disponibilidad.
+ *
+ * Algoritmo:
+ *  1. Genera hasta 60 días hábiles (L–V) partiendo de mañana en Colombia
+ *  2. Los consulta en lotes de 10 en paralelo (rápido)
+ *  3. Devuelve los primeros `maxDias` que tengan al menos 1 slot libre
+ *  4. Si los primeros 10 están llenos, automáticamente prueba el 11, 12...
+ *
+ * @param {string}  sedeSlug
+ * @param {string}  especialidad
+ * @param {number}  [maxDias=10]   — días con disponibilidad a devolver
+ * @returns {Array<{fechaStr, label, slots}>}
+ */
+async function obtenerDiasDisponibles(sedeSlug, especialidad, maxDias = 10) {
+  // Fecha de hoy en Colombia (evita bug de UTC vs Colombia a final del día)
+  const hoyStr = fechaColombiaStr(new Date());
+  const [hy, hm, hd] = hoyStr.split("-").map(Number);
+  const hoy = new Date(hy, hm - 1, hd);
 
-    const slots = data.slots || [];
-    if (slots.length) return slots;
+  // Generar candidatos: hasta 90 días hábiles hacia adelante
+  const candidatos = [];
+  for (let i = 1; candidatos.length < 90 && i <= 180; i++) {
+    const cursor = new Date(hoy);
+    cursor.setDate(hoy.getDate() + i);
+    const dow = cursor.getDay(); // 0=Dom, 6=Sab
+    if (dow === 0 || dow === 6) continue; // saltar fines de semana
+    candidatos.push(cursor.toLocaleDateString("en-CA")); // YYYY-MM-DD
   }
-  return [];
+
+  const resultado = [];
+
+  // Consultar en lotes de 10 en paralelo — mucho más rápido que secuencial
+  for (let i = 0; i < candidatos.length && resultado.length < maxDias; i += 10) {
+    const lote = candidatos.slice(i, i + 10);
+    const respuestas = await Promise.all(
+      lote.map(async fechaStr => {
+        try {
+          const slots = await obtenerSlotsParaFecha(sedeSlug, especialidad, fechaStr);
+          return { fechaStr, slots };
+        } catch {
+          return { fechaStr, slots: [] };
+        }
+      })
+    );
+    for (const { fechaStr, slots } of respuestas) {
+      if (slots.length > 0 && resultado.length < maxDias) {
+        resultado.push({ fechaStr, label: labelFecha(fechaStr), slots });
+      }
+    }
+  }
+
+  return resultado;
 }
 
 async function crearCita(pacienteId, sedeSlug, especialidad, slot) {
@@ -299,16 +345,46 @@ const ESP_CORTA = {
   "Especialistas":    "Especialista",
 };
 
+// ── Zona horaria Colombia (UTC-5) ─────────────────────────────
+// SIEMPRE se especifica explícitamente para que funcione en Railway (UTC)
+
 function fmtFecha(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("es-CO", {
+    timeZone: "America/Bogota",
     weekday: "short", day: "numeric", month: "short",
     hour: "2-digit", minute: "2-digit",
   });
 }
 
 function fmtHora(iso) {
-  return new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("es-CO", {
+    timeZone: "America/Bogota",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+// Devuelve "YYYY-MM-DD" en zona horaria Colombia
+// new Date().toISOString() devuelve UTC y puede ser un día diferente al de Colombia
+function fechaColombiaStr(date) {
+  return date.toLocaleDateString("en-CA", { timeZone: "America/Bogota" }); // en-CA = YYYY-MM-DD
+}
+
+// Etiqueta legible para un día: "lunes 27 abr."
+function labelFecha(fechaStr) {
+  const [y, m, d] = fechaStr.split("-").map(Number);
+  const fecha = new Date(y, m - 1, d, 12); // mediodía evita edge cases de DST
+  const dia  = fecha.toLocaleDateString("es-CO", { weekday: "long" });
+  const rest = fecha.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+  return `${dia} ${rest}`;
+}
+
+// Etiqueta larga para confirmaciones: "lunes 27 de abril de 2026"
+function labelFechaLarga(fechaStr) {
+  const [y, m, d] = fechaStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString("es-CO", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
 }
 
 /* ============================================================
@@ -422,46 +498,90 @@ async function menuPostCitas(to) {
 }
 
 /* ============================================================
-   SECCIÓN 6 · FLUJO DE SLOTS
+   SECCIÓN 6 · FLUJO DE FECHAS Y SLOTS
    ============================================================ */
 
-async function enviarSlots(to, sedeNombre, especialidad) {
-  await sendText(to, `🔍 Consultando disponibilidad en *${sedeNombre}*... ⏳`);
+/**
+ * PASO 1: Muestra los próximos 10 días hábiles con disponibilidad.
+ * El paciente elige primero el DÍA, luego el horario específico.
+ * Si los 10 primeros días están llenos, muestra el 11, 12, etc.
+ */
+async function enviarFechas(to, sedeNombre, especialidad) {
+  await sendText(to, `🔍 Buscando disponibilidad en *${sedeNombre}*... ⏳`);
 
-  let slots;
+  let dias;
   try {
-    slots = await obtenerSlots(SEDE_SLUG[sedeNombre], especialidad);
+    dias = await obtenerDiasDisponibles(SEDE_SLUG[sedeNombre], especialidad, 10);
   } catch (err) {
-    console.error("❌ Error obteniendo slots:", err.message);
+    console.error("❌ Error obteniendo días:", err.message);
     const esTimeout = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
     await sendText(to, esTimeout
-      ? "⏱️ El servidor tardó demasiado en responder. Intenta en unos segundos."
-      : "⚠️ No pudimos consultar la disponibilidad en este momento. Intenta en unos minutos."
+      ? "⏱️ El servidor tardó demasiado. Intenta en unos segundos."
+      : "⚠️ No pudimos consultar la disponibilidad. Intenta en unos minutos."
     );
     return false;
   }
 
-  if (!slots.length) {
-    await sendText(to, `😔 Sin disponibilidad en *${sedeNombre}* para mañana.\n¿Deseas consultar en otra sede?`);
+  if (!dias.length) {
+    await sendText(to,
+      `😔 No hay disponibilidad próxima en *${sedeNombre}*.
+¿Deseas consultar en otra sede?`
+    );
     await menuSedesCita(to);
     return false;
   }
 
-  await saveSlotSelection(to, slots);
+  // Guardar la lista completa de días+slots en Redis (TTL 15 min)
+  await saveSlotSelection(to, dias);
 
   await sendList(to, {
-    header:      `📅 Disponibilidad — ${sedeNombre}`,
-    body:        `Selecciona tu horario para *${especialidad}*:`,
-    footer:      "Horarios disponibles en tiempo real",
-    buttonLabel: "Ver horarios",
-    sections: [{ title: "Próximos horarios libres", rows: slots.map((s, i) => ({
-      id:          `slot_${i}`,
-      title:       s.label.slice(0, 24),
-      description: sedeNombre,
-    })) }],
+    header:      `📅 ${sedeNombre} — Días disponibles`,
+    body:        `Selecciona el día para tu cita de *${especialidad}*:`,
+    footer:      "Días hábiles con horarios libres",
+    buttonLabel: "Ver días",
+    sections: [{
+      title: "Próximos días disponibles",
+      rows:  dias.map((d, i) => ({
+        id:          `fecha_${i}`,
+        title:       d.label.slice(0, 24),
+        description: `${d.slots.length} horario${d.slots.length !== 1 ? "s" : ""} disponible${d.slots.length !== 1 ? "s" : ""}`,
+      })),
+    }],
   });
 
   return true;
+}
+
+/**
+ * PASO 2: Muestra los horarios disponibles para el día elegido.
+ * @param {string} fechaStr  — YYYY-MM-DD del día seleccionado
+ * @param {Array}  slots     — lista de slots ya consultada (sin nueva llamada a la API)
+ */
+async function enviarSlotsParaDia(to, sedeNombre, especialidad, fechaStr, slots) {
+  // Reemplazar en Redis con solo los slots de este día (TTL 15 min)
+  await saveSlotSelection(to, slots);
+
+  const labelDia = labelFechaLarga(fechaStr);
+
+  await sendList(to, {
+    header:      `🕐 ${labelDia}`,
+    body:        `Selecciona el horario para *${especialidad}* en ${sedeNombre}:`,
+    footer:      "Horarios en tiempo real",
+    buttonLabel: "Ver horarios",
+    sections: [{
+      title: "Horarios disponibles",
+      rows:  slots.map((s, i) => {
+        // El label tiene formato "lunes 27 abr. — 11:00"
+        // Extraemos solo la hora para el título
+        const hora = s.label.split(" — ")[1] || s.label.slice(-5);
+        return {
+          id:          `slot_${i}`,
+          title:       hora,
+          description: `${sedeNombre} · ${especialidad}`.slice(0, 72),
+        };
+      }),
+    }],
+  });
 }
 
 /* ============================================================
@@ -873,8 +993,9 @@ async function handleBot(from, text, buttonId) {
   if (sesion.paso === "cita_sede") {
     if (SEDES_MAP[payload]) {
       const sede = SEDES_MAP[payload];
-      await saveSession(from, { paso: "cita_slot", datos: { ...sesion.datos, sede } });
-      await enviarSlots(from, sede, sesion.datos.especialidad);
+      // Ir a selección de FECHA (nuevo paso intermedio)
+      await saveSession(from, { paso: "cita_fecha", datos: { ...sesion.datos, sede } });
+      await enviarFechas(from, sede, sesion.datos.especialidad);
     } else {
       await sendText(from, "Por favor selecciona una sede de la lista 👆");
       await menuSedesCita(from);
@@ -882,34 +1003,91 @@ async function handleBot(from, text, buttonId) {
     return;
   }
 
-  // ── Selección de slot ──────────────────────────────────────
-  if (sesion.paso === "cita_slot") {
-    // Cambio de sede desde pantalla de slots
+  // ── Selección de fecha (día) ───────────────────────────────
+  if (sesion.paso === "cita_fecha") {
+    // Cambio de sede desde la pantalla de fechas
     if (SEDES_MAP[payload]) {
       const nuevaSede = SEDES_MAP[payload];
       await saveSession(from, { ...sesion, datos: { ...sesion.datos, sede: nuevaSede } });
-      await enviarSlots(from, nuevaSede, sesion.datos.especialidad);
+      await enviarFechas(from, nuevaSede, sesion.datos.especialidad);
+      return;
+    }
+
+    const fechaMatch = payload.match(/^fecha_(\d+)$/);
+    if (!fechaMatch) {
+      await sendText(from, "Por favor selecciona un día de la lista 👆");
+      await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
+      return;
+    }
+
+    // Recuperar la lista de días guardada en Redis
+    const dias = await getSlotSelection(from);
+    if (!dias || !Array.isArray(dias) || !dias[0]?.fechaStr) {
+      // Los datos expiraron (TTL 15 min), volver a buscar
+      await sendText(from, "⏱️ La consulta expiró. Buscando disponibilidad de nuevo...");
+      await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
+      return;
+    }
+
+    const diaElegido = dias[parseInt(fechaMatch[1])];
+    if (!diaElegido) {
+      await sendText(from, "⚠️ Ese día ya no está disponible. Selecciona otro:");
+      await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
+      return;
+    }
+
+    // Guardar fecha elegida en sesión y pasar a selección de hora
+    await saveSession(from, {
+      paso:  "cita_slot",
+      datos: { ...sesion.datos, fechaStr: diaElegido.fechaStr },
+    });
+    await enviarSlotsParaDia(
+      from,
+      sesion.datos.sede,
+      sesion.datos.especialidad,
+      diaElegido.fechaStr,
+      diaElegido.slots
+    );
+    return;
+  }
+
+  // ── Selección de slot (hora dentro del día elegido) ──────────
+  if (sesion.paso === "cita_slot") {
+    // Cambio de sede → volver a elegir fecha
+    if (SEDES_MAP[payload]) {
+      const nuevaSede = SEDES_MAP[payload];
+      await saveSession(from, { paso: "cita_fecha", datos: { ...sesion.datos, sede: nuevaSede, fechaStr: undefined } });
+      await enviarFechas(from, nuevaSede, sesion.datos.especialidad);
       return;
     }
 
     const slotMatch = payload.match(/^slot_(\d+)$/);
     if (!slotMatch) {
       await sendText(from, "Por favor selecciona un horario de la lista 👆");
-      await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
+      // Volver a mostrar los slots del día guardado
+      const slotsActuales = await getSlotSelection(from);
+      if (slotsActuales && sesion.datos.fechaStr) {
+        await enviarSlotsParaDia(from, sesion.datos.sede, sesion.datos.especialidad, sesion.datos.fechaStr, slotsActuales);
+      } else {
+        await saveSession(from, { paso: "cita_fecha", datos: { ...sesion.datos, fechaStr: undefined } });
+        await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
+      }
       return;
     }
 
     const slots = await getSlotSelection(from);
-    if (!slots) {
-      await sendText(from, "⏱️ Los horarios expiraron. Volvemos a consultar...");
-      await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
+    if (!slots || !Array.isArray(slots) || slots[0]?.fechaStr) {
+      // Expiró o son datos de días (no de slots) — volver a fechas
+      await sendText(from, "⏱️ Los horarios expiraron. Selecciona el día de nuevo:");
+      await saveSession(from, { paso: "cita_fecha", datos: { ...sesion.datos, fechaStr: undefined } });
+      await enviarFechas(from, sesion.datos.sede, sesion.datos.especialidad);
       return;
     }
 
     const slot = slots[parseInt(slotMatch[1])];
     if (!slot) {
       await sendText(from, "⚠️ Ese horario ya no está disponible. Selecciona otro:");
-      await enviarSlots(from, sesion.datos.sede, sesion.datos.especialidad);
+      await enviarSlotsParaDia(from, sesion.datos.sede, sesion.datos.especialidad, sesion.datos.fechaStr, slots);
       return;
     }
 
@@ -924,16 +1102,23 @@ async function handleBot(from, text, buttonId) {
         slot
       );
 
+      // Mostrar la hora correcta en Colombia usando el label del slot
+      // slot.label tiene el formato "lunes 27 abr. — 11:00"
+      const horaSlot = slot.label.split(" — ")[1] || fmtHora(slot.inicio);
+      const diaSlot  = sesion.datos.fechaStr
+        ? labelFechaLarga(sesion.datos.fechaStr)
+        : slot.label.split(" — ")[0];
+
       await sendText(from,
         `🎉 *¡Cita registrada exitosamente!*\n\n` +
         `👤 ${sesion.datos.nombre}\n` +
         `🪪 ${sesion.datos.documento}\n` +
         `🏥 ${sesion.datos.especialidad} · ${sesion.datos.eps}\n` +
-        `📅 ${slot.label}\n` +
+        `📅 ${diaSlot} a las *${horaSlot}*\n` +
         `📍 ${sesion.datos.sede}\n` +
         `🆔 Ref: \`${cita.id.slice(-8).toUpperCase()}\`\n\n` +
-        `✅ Recibirás confirmación pronto.\n` +
-        `Para ver o cancelar tu cita usa *"Mis citas"* en el menú.`
+        `⏳ Tu solicitud está *pendiente de aprobación*.\n` +
+        `Recibirás un mensaje cuando sea confirmada o denegada.`
       );
     } catch (err) {
       const esColision = err.response?.status === 409;
