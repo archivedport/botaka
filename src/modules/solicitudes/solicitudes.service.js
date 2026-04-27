@@ -17,6 +17,7 @@ const prisma = require("../../config/database");
 const { meta }               = require("../../config/env");
 const { getIO }              = require("../../socket/socket");
 const { invalidarSlotCache } = require("../../config/redis");
+const { guardarMensaje }     = require("../chat/messages.service");
 
 // ── Helpers de envío WhatsApp ────────────────────────────────
 // Mismo patrón que chat.controller.js: axios directo con meta.*
@@ -196,6 +197,17 @@ async function aprobarSolicitud(citaId, { asesorId, nota = "" }) {
 
   await sendWhatsApp(phone, mensaje);
 
+  // Persistir en BD para que aparezca en el historial del panel
+  await guardarMensaje({ phone, de: "BOT", texto: mensaje });
+
+  // Emitir al panel en tiempo real — dibuja la burbuja en chats.html
+  try {
+    const io = getIO();
+    const payload = { phone, from: "BOT", mensaje, timestamp: new Date().toISOString() };
+    io.to(`chat:${phone}`).emit("chat:new_message", payload);
+    io.to("asesores").emit("chat:list_update", payload);
+  } catch {}
+
   return cita;
 }
 
@@ -281,6 +293,16 @@ async function denegarSolicitud(citaId, { asesorId, nota = "" }) {
     + `o solicita hablar con un asesor. 🙏`;
 
   await sendWhatsApp(phone, mensaje);
+
+  // Persistir en BD + emitir al panel
+  await guardarMensaje({ phone, de: "BOT", texto: mensaje });
+
+  try {
+    const io = getIO();
+    const payload = { phone, from: "BOT", mensaje, timestamp: new Date().toISOString() };
+    io.to(`chat:${phone}`).emit("chat:new_message", payload);
+    io.to("asesores").emit("chat:list_update", payload);
+  } catch {}
 
   return cita;
 }
