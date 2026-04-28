@@ -1,0 +1,7 @@
+# nixpacks.toml
+# Sobreescribe el comando de instalación de Nixpacks.
+# Usar npm install en vez de npm ci para que funcione
+# aunque package-lock.json no esté actualizado.
+
+[phases.install]
+cmds = ["npm install"]
