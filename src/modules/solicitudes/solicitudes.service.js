@@ -29,20 +29,24 @@ const waHeaders = () => ({
 });
 
 async function sendWhatsApp(to, body) {
+  const url = waUrl();
+  console.log(`📤 WA solicitud → ${to} | URL: ${url}`);
   try {
     await axios.post(
-      waUrl(),
-      {
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body, preview_url: false },
-      },
+      url,
+      { messaging_product: "whatsapp", to, type: "text", text: { body, preview_url: false } },
       { headers: waHeaders(), timeout: 8000 }
     );
+    console.log(`✅ WA solicitud enviado a ${to}`);
   } catch (err) {
-    // No romper el flujo si falla el envío — el asesor ya tomó la acción
-    console.error("⚠️  WA notify solicitud:", err.response?.data || err.message);
+    // Log completo para diagnóstico en Railway
+    const detail = err.response?.data || err.message;
+    console.error(`❌ WA solicitud FALLÓ → ${to}`);
+    console.error(`   Status: ${err.response?.status}`);
+    console.error(`   Detail:`, JSON.stringify(detail, null, 2));
+    console.error(`   Token (últimos 6): ...${(process.env.META_ACCESS_TOKEN || "").slice(-6)}`);
+    console.error(`   PhoneId: ${process.env.META_PHONE_ID}`);
+    // No romper el flujo — el asesor ya tomó la acción
   }
 }
 
@@ -100,6 +104,7 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
               select: {
                 id:              true,
                 tipoDocumento:   true,
+                resultadoRaw:    true,  // contiene cloudinaryUrl
                 resultadoParsed: true,
                 confianza:       true,
                 createdAt:       true,
