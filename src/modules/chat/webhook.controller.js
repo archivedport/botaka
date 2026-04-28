@@ -14,7 +14,7 @@
 "use strict";
 
 const axios = require("axios");
-const { getChatStatus, getSession } = require("../../config/redis");
+const { getChatStatus, getSession, saveMediaCache } = require("../../config/redis");
 const { emitirMensajePaciente } = require("../../socket/socket");
 const { meta }               = require("../../config/env");
 const prisma                 = require("../../config/database");
@@ -135,6 +135,21 @@ async function handle(req, res) {
     const DOC_STEPS = ["cita_doc_cedula", "cita_doc_autorizacion", "cita_doc_historial"];
     const sesionBot = await getSession(from).catch(() => ({ paso: "inicio", datos: {} }));
     const botHandlesMedia = mediaId && DOC_STEPS.includes(sesionBot.paso);
+
+    // Si el bot está esperando un documento, descargar la imagen
+    // AHORA (mientras el token de Meta es válido y la URL no expiró)
+    // y cachearla en Redis para que el bot la use sin re-descargar.
+    if (botHandlesMedia) {
+      try {
+        const { descargarMediaMeta } = require("../documents/documents.service");
+        const { base64, mimeType } = await descargarMediaMeta(mediaId);
+        await saveMediaCache(mediaId, base64, mimeType);
+        console.log(`📦 Media ${mediaId} cacheado para ${from}`);
+      } catch (dlErr) {
+        console.error("⚠️ Error pre-descargando media:", dlErr.message);
+        // Continuar igual — el bot intentará descargar él mismo
+      }
+    }
 
     if (_handleBot) {
       // Pasar mediaId al bot — lo usa en los pasos de carga de documentos
