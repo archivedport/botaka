@@ -86,20 +86,23 @@ async function descargarMediaMeta(mediaId) {
 
 async function analizarConGemini(base64, mimeType) {
   // Intentar primero con gemini-1.5-flash, si falla con 404 usar gemini-pro-vision
+  // Modelos con sus versiones de API correctas (v1beta o v1)
+  // gemini-1.5-* fue movido de v1beta a v1
+  // gemini-2.0-* funciona en v1beta
   const MODELOS = [
-    gemini.model,                     // env: "gemini-1.5-flash"
-    "gemini-1.5-flash-latest",        // alias al más reciente
-    "gemini-1.5-flash-001",           // versión específica estable
-    "gemini-2.0-flash",               // sucesor en caso de deprecación
+    { modelo: gemini.model,              api: "v1"     }, // env gemini-1.5-flash → v1
+    { modelo: "gemini-1.5-flash",        api: "v1"     }, // v1 explícito
+    { modelo: "gemini-2.0-flash-lite",   api: "v1beta" }, // free tier generoso
+    { modelo: "gemini-2.0-flash",        api: "v1beta" }, // fallback final
   ];
 
   let ultimoError = null;
 
-  for (const modelo of MODELOS) {
+  for (const { modelo, api } of MODELOS) {
     const GEMINI_URL =
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${gemini.apiKey}`;
+      `https://generativelanguage.googleapis.com/${api}/models/${modelo}:generateContent?key=${gemini.apiKey}`;
 
-    console.log(`🤖 Gemini → modelo: ${modelo} | mimeType: ${mimeType} | base64: ${base64?.length || 0} chars`);
+    console.log(`🤖 Gemini → ${api}/${modelo} | mimeType: ${mimeType} | base64: ${base64?.length || 0} chars`);
 
     const payload = {
       contents: [{
@@ -129,7 +132,7 @@ async function analizarConGemini(base64, mimeType) {
     } catch (err) {
       const status = err.response?.status;
       const detail = JSON.stringify(err.response?.data || err.message);
-      console.error(`❌ Gemini ${modelo} → ${status}: ${detail}`);
+      console.error(`❌ Gemini ${api}/${modelo} → ${status}: ${detail}`);
       ultimoError = err;
 
       // Solo reintentar en 404 (modelo no existe) o 429 (rate limit)
@@ -168,12 +171,17 @@ function parsearRespuesta(texto) {
 async function verificarCalidadDocumento(base64, mimeType) {
   try {
     // Usar el mismo modelo que analizarConGemini (con fallback)
-    const MODELOS_Q = [gemini.model, "gemini-1.5-flash-latest", "gemini-2.0-flash"];
+    const MODELOS_Q = [
+      { modelo: gemini.model,             api: "v1"     },
+      { modelo: "gemini-1.5-flash",       api: "v1"     },
+      { modelo: "gemini-2.0-flash-lite",  api: "v1beta" },
+      { modelo: "gemini-2.0-flash",       api: "v1beta" },
+    ];
     let resTexto = "";
 
-    for (const modelo of MODELOS_Q) {
+    for (const { modelo, api } of MODELOS_Q) {
       const GEMINI_URL =
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${gemini.apiKey}`;
+        `https://generativelanguage.googleapis.com/${api}/models/${modelo}:generateContent?key=${gemini.apiKey}`;
       try {
         const res = await axios.post(GEMINI_URL, {
           contents: [{
