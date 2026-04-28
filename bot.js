@@ -269,15 +269,18 @@ async function cancelarCitaAPI(citaId) {
 async function procesarDocAPI(phone, mediaId) {
   const paciente = await obtenerPaciente(phone);
 
-  // Intentar recuperar el media pre-descargado por webhook.controller
-  // (evita re-descargar de Meta y el riesgo de que la URL expire)
+  // Recuperar media pre-descargado (incluye base64 + cloudinaryUrl)
   let bodyExtra = {};
   try {
     const cached = await getMediaCache(mediaId);
     if (cached?.base64) {
-      bodyExtra = { base64: cached.base64, mimeType: cached.mimeType };
-      await delMediaCache(mediaId); // limpiar cache tras uso
-      console.log(`📦 Usando media cacheado para ${phone}`);
+      bodyExtra = {
+        base64:        cached.base64,
+        mimeType:      cached.mimeType,
+        cloudinaryUrl: cached.cloudinaryUrl || null,
+      };
+      await delMediaCache(mediaId);
+      console.log(`📦 Usando media cacheado para ${phone} | cloudinary=${!!cached.cloudinaryUrl}`);
     }
   } catch (cacheErr) {
     console.warn("⚠️ getMediaCache:", cacheErr.message);
@@ -1114,9 +1117,10 @@ async function handleBot(from, text, buttonId, mediaId) {
         paso:  "cita_doc_autorizacion",
         datos: {
           ...sesion.datos,
-          nombre:       nombre   || sesion.datos.nombre   || "Paciente",
-          documento:    docNum   || sesion.datos.documento || "",
-          logIdCedula:  resultado.logId,
+          nombre:           nombre || sesion.datos.nombre || "Paciente",
+          documento:        docNum || sesion.datos.documento || "",
+          logIdCedula:      resultado.logId,
+          urlCedula:        resultado.cloudinaryUrl || null,
         },
       });
 
@@ -1164,7 +1168,11 @@ async function handleBot(from, text, buttonId, mediaId) {
 
       await saveSession(from, {
         paso:  "cita_doc_historial",
-        datos: { ...sesion.datos, logIdAutorizacion: resultado.logId },
+        datos: {
+          ...sesion.datos,
+          logIdAutorizacion: resultado.logId,
+          urlAutorizacion:   resultado.cloudinaryUrl || null,
+        },
       });
 
     } catch (err) {
@@ -1191,6 +1199,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
 
     let logIdHistorial = null;
+    let urlHistorial   = null;
 
     if (mediaId) {
       await sendText(from, "🔍 Procesando historia clínica... ⏳");
@@ -1205,6 +1214,7 @@ async function handleBot(from, text, buttonId, mediaId) {
           return;
         }
         logIdHistorial = resultado.logId;
+        urlHistorial   = resultado.cloudinaryUrl || null;
         await sendText(from, `✅ Historia clínica recibida.`);
       } catch (err) {
         console.error("❌ procesarDocAPI historial:", err.message);
@@ -1215,7 +1225,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     const nombre = sesion.datos.nombre || "Paciente";
     await saveSession(from, {
       paso:  "cita_sede",
-      datos: { ...sesion.datos, logIdHistorial },
+      datos: { ...sesion.datos, logIdHistorial, urlHistorial },
     });
     await sendText(from, `Gracias, *${nombre}*. 😊\n\nSelecciona la sede para tu cita:`);
     await menuSedesCita(from);
