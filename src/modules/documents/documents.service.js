@@ -187,21 +187,9 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, pacienteI
     mimeType  = dl.mimeType;
   }
 
-  // 2. Verificar calidad antes de la extracción completa
-  //    Evita gastar tokens de Gemini en imágenes ilegibles
-  const calidad = await verificarCalidadDocumento(base64, mimeType);
-  if (!calidad.legible) {
-    return {
-      legible:            false,
-      problema:           calidad.problema || "La imagen no es suficientemente clara.",
-      logId:              null,
-      datos:              null,
-      confianza:          0,
-      requiereValidacion: false,
-    };
-  }
-
-  // 3. Analizar con Gemini completo
+  // 2. Analizar con Gemini (extracción completa)
+  //    El quality check se hace en webhook.controller para el auto-proceso,
+  //    y en bot.js para el flujo guiado de agendamiento.
   const textoGemini = await analizarConGemini(base64, mimeType);
 
   // 3. Parsear JSON
