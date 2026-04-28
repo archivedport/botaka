@@ -17,6 +17,8 @@ const {
   saveSlotSelection,
   getSlotSelection,
   clearSlotSelection,
+  getMediaCache,
+  delMediaCache,
 } = require("./src/config/redis");
 
 const { meta } = require("./src/config/env");
@@ -266,10 +268,25 @@ async function cancelarCitaAPI(citaId) {
  */
 async function procesarDocAPI(phone, mediaId) {
   const paciente = await obtenerPaciente(phone);
+
+  // Intentar recuperar el media pre-descargado por webhook.controller
+  // (evita re-descargar de Meta y el riesgo de que la URL expire)
+  let bodyExtra = {};
+  try {
+    const cached = await getMediaCache(mediaId);
+    if (cached?.base64) {
+      bodyExtra = { base64: cached.base64, mimeType: cached.mimeType };
+      await delMediaCache(mediaId); // limpiar cache tras uso
+      console.log(`📦 Usando media cacheado para ${phone}`);
+    }
+  } catch (cacheErr) {
+    console.warn("⚠️ getMediaCache:", cacheErr.message);
+  }
+
   const { data } = await axios.post(
     `${API_BASE}/api/process-document`,
-    { mediaId, pacienteId: paciente?.id || null },
-    { headers: await apiHeaders(), timeout: 65000 } // quality(15s) + extraction(30s) + margen
+    { mediaId, pacienteId: paciente?.id || null, ...bodyExtra },
+    { headers: await apiHeaders(), timeout: 65000 }
   );
   return data;
 }
