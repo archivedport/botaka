@@ -162,10 +162,10 @@ async function getPendingAsesorRequests() {
 // ── Cache de media (imágenes WhatsApp) ───────────────────────
 //  TTL corto (5 min) — solo mientras el bot procesa el documento
 
-async function saveMediaCache(mediaId, base64, mimeType) {
+async function saveMediaCache(mediaId, base64, mimeType, cloudinaryUrl = null) {
   await redis.set(
     `ips:media:${mediaId}`,
-    JSON.stringify({ base64, mimeType }),
+    JSON.stringify({ base64, mimeType, cloudinaryUrl }),
     "EX", 300  // 5 minutos
   );
 }
