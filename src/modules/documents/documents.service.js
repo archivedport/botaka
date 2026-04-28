@@ -15,7 +15,7 @@
 
 const axios  = require("axios");
 const prisma = require("../../config/database");
-const { meta, gemini } = require("../../config/env");
+const { meta, gemini, anthropic } = require("../../config/env");
 
 // ── Prompt de extracción ──────────────────────────────────────
 
@@ -84,64 +84,46 @@ async function descargarMediaMeta(mediaId) {
 
 // ── Enviar a Gemini ───────────────────────────────────────────
 
+/**
+ * Analiza un documento con Claude Haiku (visión).
+ * Anthropic API v1/messages — sin problemas de cuota.
+ */
 async function analizarConGemini(base64, mimeType) {
-  // Intentar primero con gemini-1.5-flash, si falla con 404 usar gemini-pro-vision
-  // Modelos con sus versiones de API correctas (v1beta o v1)
-  // gemini-1.5-* fue movido de v1beta a v1
-  // gemini-2.0-* funciona en v1beta
-  const MODELOS = [
-    { modelo: gemini.model,              api: "v1"     }, // env gemini-1.5-flash → v1
-    { modelo: "gemini-1.5-flash",        api: "v1"     }, // v1 explícito
-    { modelo: "gemini-2.0-flash-lite",   api: "v1beta" }, // free tier generoso
-    { modelo: "gemini-2.0-flash",        api: "v1beta" }, // fallback final
-  ];
+  console.log(`🤖 Claude Haiku → mimeType: ${mimeType} | base64: ${base64?.length || 0} chars`);
 
-  let ultimoError = null;
-
-  for (const { modelo, api } of MODELOS) {
-    const GEMINI_URL =
-      `https://generativelanguage.googleapis.com/${api}/models/${modelo}:generateContent?key=${gemini.apiKey}`;
-
-    console.log(`🤖 Gemini → ${api}/${modelo} | mimeType: ${mimeType} | base64: ${base64?.length || 0} chars`);
-
-    const payload = {
-      contents: [{
-        parts: [
-          { text: EXTRACTION_PROMPT },
-          { inline_data: { mime_type: mimeType, data: base64 } },
+  const res = await axios.post(
+    "https://api.anthropic.com/v1/messages",
+    {
+      model:      anthropic.model,
+      max_tokens: 1024,
+      messages: [{
+        role:    "user",
+        content: [
+          {
+            type:   "image",
+            source: { type: "base64", media_type: mimeType, data: base64 },
+          },
+          { type: "text", text: EXTRACTION_PROMPT },
         ],
       }],
-      generationConfig: {
-        temperature:     0.1,
-        maxOutputTokens: 1024,
+    },
+    {
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         anthropic.apiKey,
+        "anthropic-version": "2023-06-01",
       },
-    };
-
-    try {
-      const res = await axios.post(GEMINI_URL, payload, {
-        headers: { "Content-Type": "application/json" },
-        timeout: 30000,
-      });
-
-      const texto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!texto) throw new Error("Gemini no devolvió contenido.");
-
-      console.log(`✅ Gemini OK con modelo: ${modelo}`);
-      return texto;
-
-    } catch (err) {
-      const status = err.response?.status;
-      const detail = JSON.stringify(err.response?.data || err.message);
-      console.error(`❌ Gemini ${api}/${modelo} → ${status}: ${detail}`);
-      ultimoError = err;
-
-      // Solo reintentar en 404 (modelo no existe) o 429 (rate limit)
-      if (status !== 404 && status !== 429) throw err;
+      timeout: 30000,
     }
-  }
+  );
 
-  throw ultimoError;
+  const texto = res.data?.content?.[0]?.text;
+  if (!texto) throw new Error("Claude no devolvió contenido.");
+
+  console.log("✅ Claude OK");
+  return texto;
 }
+
 
 // ── Parsear respuesta de Gemini ───────────────────────────────
 
@@ -170,37 +152,34 @@ function parsearRespuesta(texto) {
  */
 async function verificarCalidadDocumento(base64, mimeType) {
   try {
-    // Usar el mismo modelo que analizarConGemini (con fallback)
-    const MODELOS_Q = [
-      { modelo: gemini.model,             api: "v1"     },
-      { modelo: "gemini-1.5-flash",       api: "v1"     },
-      { modelo: "gemini-2.0-flash-lite",  api: "v1beta" },
-      { modelo: "gemini-2.0-flash",       api: "v1beta" },
-    ];
-    let resTexto = "";
-
-    for (const { modelo, api } of MODELOS_Q) {
-      const GEMINI_URL =
-        `https://generativelanguage.googleapis.com/${api}/models/${modelo}:generateContent?key=${gemini.apiKey}`;
-      try {
-        const res = await axios.post(GEMINI_URL, {
-          contents: [{
-            parts: [
-              { text: QUALITY_PROMPT },
-              { inline_data: { mime_type: mimeType, data: base64 } },
-            ],
-          }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
-        }, { headers: { "Content-Type": "application/json" }, timeout: 15000 });
-
-        resTexto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        break; // éxito, salir del loop
-      } catch (e) {
-        if (e.response?.status !== 404 && e.response?.status !== 429) throw e;
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model:      anthropic.model,
+        max_tokens: 256,
+        messages: [{
+          role:    "user",
+          content: [
+            {
+              type:   "image",
+              source: { type: "base64", media_type: mimeType, data: base64 },
+            },
+            { type: "text", text: QUALITY_PROMPT },
+          ],
+        }],
+      },
+      {
+        headers: {
+          "Content-Type":      "application/json",
+          "x-api-key":         anthropic.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        timeout: 15000,
       }
-    }
+    );
 
-    return parsearRespuesta(resTexto);
+    const texto = res.data?.content?.[0]?.text || "";
+    return parsearRespuesta(texto);
   } catch (err) {
     // Si falla la verificación, asumir legible para no bloquear al paciente
     console.warn("⚠️ verificarCalidad falló, asumiendo legible:", err.message);
