@@ -85,31 +85,59 @@ async function descargarMediaMeta(mediaId) {
 // ── Enviar a Gemini ───────────────────────────────────────────
 
 async function analizarConGemini(base64, mimeType) {
-  const GEMINI_URL =
-    `https://generativelanguage.googleapis.com/v1beta/models/${gemini.model}:generateContent?key=${gemini.apiKey}`;
+  // Intentar primero con gemini-1.5-flash, si falla con 404 usar gemini-pro-vision
+  const MODELOS = [
+    gemini.model,                     // env: "gemini-1.5-flash"
+    "gemini-1.5-flash-latest",        // alias al más reciente
+    "gemini-1.5-flash-001",           // versión específica estable
+    "gemini-2.0-flash",               // sucesor en caso de deprecación
+  ];
 
-  const payload = {
-    contents: [{
-      parts: [
-        { text: EXTRACTION_PROMPT },
-        { inline_data: { mime_type: mimeType, data: base64 } },
-      ],
-    }],
-    generationConfig: {
-      temperature:     0.1,
-      maxOutputTokens: 1024,
-    },
-  };
+  let ultimoError = null;
 
-  const res = await axios.post(GEMINI_URL, payload, {
-    headers: { "Content-Type": "application/json" },
-    timeout: 30000,
-  });
+  for (const modelo of MODELOS) {
+    const GEMINI_URL =
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${gemini.apiKey}`;
 
-  const texto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!texto) throw new Error("Gemini no devolvió contenido.");
+    console.log(`🤖 Gemini → modelo: ${modelo} | mimeType: ${mimeType} | base64: ${base64?.length || 0} chars`);
 
-  return texto;
+    const payload = {
+      contents: [{
+        parts: [
+          { text: EXTRACTION_PROMPT },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ],
+      }],
+      generationConfig: {
+        temperature:     0.1,
+        maxOutputTokens: 1024,
+      },
+    };
+
+    try {
+      const res = await axios.post(GEMINI_URL, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 30000,
+      });
+
+      const texto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!texto) throw new Error("Gemini no devolvió contenido.");
+
+      console.log(`✅ Gemini OK con modelo: ${modelo}`);
+      return texto;
+
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = JSON.stringify(err.response?.data || err.message);
+      console.error(`❌ Gemini ${modelo} → ${status}: ${detail}`);
+      ultimoError = err;
+
+      // Solo reintentar en 404 (modelo no existe) o 429 (rate limit)
+      if (status !== 404 && status !== 429) throw err;
+    }
+  }
+
+  throw ultimoError;
 }
 
 // ── Parsear respuesta de Gemini ───────────────────────────────
@@ -139,27 +167,32 @@ function parsearRespuesta(texto) {
  */
 async function verificarCalidadDocumento(base64, mimeType) {
   try {
-    const GEMINI_URL =
-      `https://generativelanguage.googleapis.com/v1beta/models/${gemini.model}:generateContent?key=${gemini.apiKey}`;
+    // Usar el mismo modelo que analizarConGemini (con fallback)
+    const MODELOS_Q = [gemini.model, "gemini-1.5-flash-latest", "gemini-2.0-flash"];
+    let resTexto = "";
 
-    const payload = {
-      contents: [{
-        parts: [
-          { text: QUALITY_PROMPT },
-          { inline_data: { mime_type: mimeType, data: base64 } },
-        ],
-      }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
-    };
+    for (const modelo of MODELOS_Q) {
+      const GEMINI_URL =
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${gemini.apiKey}`;
+      try {
+        const res = await axios.post(GEMINI_URL, {
+          contents: [{
+            parts: [
+              { text: QUALITY_PROMPT },
+              { inline_data: { mime_type: mimeType, data: base64 } },
+            ],
+          }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
+        }, { headers: { "Content-Type": "application/json" }, timeout: 15000 });
 
-    const res  = await axios.post(GEMINI_URL, payload, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 15000,
-    });
+        resTexto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        break; // éxito, salir del loop
+      } catch (e) {
+        if (e.response?.status !== 404 && e.response?.status !== 429) throw e;
+      }
+    }
 
-    const texto = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    // Reutilizar parsearRespuesta que ya maneja el JSON limpio correctamente
-    return parsearRespuesta(texto);
+    return parsearRespuesta(resTexto);
   } catch (err) {
     // Si falla la verificación, asumir legible para no bloquear al paciente
     console.warn("⚠️ verificarCalidad falló, asumiendo legible:", err.message);
@@ -186,6 +219,8 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, pacienteI
     base64    = dl.base64;
     mimeType  = dl.mimeType;
   }
+
+  console.log(`📄 procesarDocumento: base64=${!!base64} mimeType=${mimeType} mediaId=${mediaId}`);
 
   // 2. Analizar con Gemini (extracción completa)
   //    El quality check se hace en webhook.controller para el auto-proceso,
