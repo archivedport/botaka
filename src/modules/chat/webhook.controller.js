@@ -14,7 +14,7 @@
 "use strict";
 
 const axios = require("axios");
-const { getChatStatus }      = require("../../config/redis");
+const { getChatStatus, getSession } = require("../../config/redis");
 const { emitirMensajePaciente } = require("../../socket/socket");
 const { meta }               = require("../../config/env");
 const prisma                 = require("../../config/database");
@@ -130,12 +130,20 @@ async function handle(req, res) {
       if (buttonId && await manejarRespuestaConfirmacion(from, buttonId)) return;
     } catch(e) { /* reminders.js aún no disponible */ }
 
+    // Verificar si el bot está en un paso de carga de documentos
+    // En ese caso, el bot manejará el media directamente
+    const DOC_STEPS = ["cita_doc_cedula", "cita_doc_autorizacion", "cita_doc_historial"];
+    const sesionBot = await getSession(from).catch(() => ({ paso: "inicio", datos: {} }));
+    const botHandlesMedia = mediaId && DOC_STEPS.includes(sesionBot.paso);
+
     if (_handleBot) {
-      await _handleBot(from, texto, buttonId);
+      // Pasar mediaId al bot — lo usa en los pasos de carga de documentos
+      await _handleBot(from, texto, buttonId, mediaId);
     }
 
-    // Si llega un documento en modo BOT, también procesarlo
-    if (mediaId && tipo === "image") {
+    // Solo procesar automáticamente si el bot NO está en un paso de documentos
+    // (ej: paciente envía foto fuera del flujo → llega al panel del asesor)
+    if (mediaId && !botHandlesMedia) {
       procesarDocumentoAutomatico(from, mediaId).catch(err =>
         console.error("Error auto-procesando documento (bot):", err.message)
       );
