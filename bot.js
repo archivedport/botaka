@@ -269,7 +269,7 @@ async function procesarDocAPI(phone, mediaId) {
   const { data } = await axios.post(
     `${API_BASE}/api/process-document`,
     { mediaId, pacienteId: paciente?.id || null },
-    { headers: await apiHeaders(), timeout: 35000 } // Gemini puede tardar hasta 30s
+    { headers: await apiHeaders(), timeout: 65000 } // quality(15s) + extraction(30s) + margen
   );
   return data;
 }
@@ -1058,14 +1058,15 @@ async function handleBot(from, text, buttonId, mediaId) {
     try {
       const resultado = await procesarDocAPI(from, mediaId);
 
-      if (resultado.legible === false) {
+      // legible:false solo si el backend lo devuelve explícitamente
+      if (resultado?.legible === false) {
         await sendText(from,
           `📷 No pudimos leer tu documento.\n\n` +
           `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
           `Intenta de nuevo con:\n• Buena iluminación 💡\n• Sin movimiento\n` +
           `• Todo el documento visible\n• Sobre superficie oscura y plana`
         );
-        return; // Queda en cita_doc_cedula
+        return;
       }
 
       // Extraer datos de la cédula
@@ -1103,8 +1104,13 @@ async function handleBot(from, text, buttonId, mediaId) {
       });
 
     } catch (err) {
+      const esTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
       console.error("❌ procesarDocAPI cédula:", err.message);
-      await sendText(from, "⚠️ Problema procesando el documento. Vuelve a enviarlo:");
+      await sendText(from,
+        esTimeout
+          ? "⏱️ El servidor tardó demasiado procesando la imagen. Por favor envía la foto de nuevo:"
+          : "⚠️ Problema procesando el documento. Por favor vuelve a enviarlo:"
+      );
     }
     return;
   }
@@ -1145,8 +1151,13 @@ async function handleBot(from, text, buttonId, mediaId) {
       });
 
     } catch (err) {
-      console.error("❌ procesarDocAPI autorizacion:", err.message);
-      await sendText(from, "⚠️ Problema procesando la autorización. Vuelve a enviarla:");
+      const esTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
+      console.error("❌ procesarDocAPI autorización:", err.message);
+      await sendText(from,
+        esTimeout
+          ? "⏱️ El servidor tardó demasiado. Por favor vuelve a enviar la autorización:"
+          : "⚠️ Problema procesando la autorización. Por favor vuelve a enviarla:"
+      );
     }
     return;
   }
