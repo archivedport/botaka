@@ -15,7 +15,7 @@ const REQUIRED = [
   "META_PHONE_ID",
   "META_API_VERSION",
   "META_VERIFY_TOKEN",
-  "GEMINI_API_KEY",
+  "ANTHROPIC_API_KEY",
 ];
 
 const OPTIONAL_DEFAULTS = {
@@ -66,8 +66,13 @@ module.exports = {
   },
 
   gemini: {
-    apiKey:     process.env.GEMINI_API_KEY,
+    apiKey:     process.env.GEMINI_API_KEY || "",  // mantenido por compatibilidad
     model:      "gemini-1.5-flash",
+  },
+
+  anthropic: {
+    apiKey:     process.env.ANTHROPIC_API_KEY,
+    model:      "claude-haiku-4-5-20251001",  // más económico con visión
   },
 
   bcryptRounds:  parseInt(process.env.BCRYPT_ROUNDS),
