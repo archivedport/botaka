@@ -259,6 +259,37 @@ async function cancelarCitaAPI(citaId) {
   );
 }
 
+/**
+ * Llama al endpoint de procesamiento de documentos.
+ * Incluye verificación de calidad IA automática.
+ * Devuelve { legible, logId, datos, confianza } o { legible: false, problema }
+ */
+async function procesarDocAPI(phone, mediaId) {
+  const paciente = await obtenerPaciente(phone);
+  const { data } = await axios.post(
+    `${API_BASE}/api/process-document`,
+    { mediaId, pacienteId: paciente?.id || null },
+    { headers: await apiHeaders(), timeout: 35000 } // Gemini puede tardar hasta 30s
+  );
+  return data;
+}
+
+/**
+ * Actualiza el perfil del paciente con los datos extraídos del documento.
+ */
+async function actualizarPacienteAPI(pacienteId, datos) {
+  if (!pacienteId || !datos || !Object.keys(datos).length) return;
+  try {
+    await axios.patch(
+      `${API_BASE}/api/patients/${pacienteId}`,
+      datos,
+      { headers: await apiHeaders(), timeout: API_TIMEOUT }
+    );
+  } catch (e) {
+    console.warn("⚠️ actualizarPacienteAPI:", e.message);
+  }
+}
+
 /* ============================================================
    SECCIÓN 3 · CONSTANTES DE SEDES
    ============================================================ */
@@ -808,7 +839,7 @@ async function confirmarCancelacion(phone, indice, citasCancelables) {
    SECCIÓN 9 · HANDLER PRINCIPAL
    ============================================================ */
 
-async function handleBot(from, text, buttonId) {
+async function handleBot(from, text, buttonId, mediaId) {
   const msg     = text?.trim().toLowerCase() || "";
   const payload = buttonId || msg;
 
@@ -998,8 +1029,13 @@ async function handleBot(from, text, buttonId) {
       eps_otra:       "Otra",
     };
     if (EPS[payload]) {
-      await saveSession(from, { paso: "cita_documento", datos: { ...sesion.datos, eps: EPS[payload] } });
-      await sendText(from, `✅ EPS: *${EPS[payload]}*\n\nEscribe tu *número de documento* (solo números):`);
+      await saveSession(from, { paso: "cita_doc_cedula", datos: { ...sesion.datos, eps: EPS[payload] } });
+      await sendText(from,
+        `✅ EPS: *${EPS[payload]}*\n\n` +
+        `📋 Para verificar tu identidad, envía una foto clara de:\n` +
+        `📷 Tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI)\n\n` +
+        `_Solo el frente. Buena luz, sin borrosa, todo visible._`
+      );
     } else {
       await sendText(from, "Por favor selecciona tu EPS de la lista 👆");
       await menuEPS(from, sesion.datos.especialidad);
@@ -1007,32 +1043,152 @@ async function handleBot(from, text, buttonId) {
     return;
   }
 
-  // ── Documento ──────────────────────────────────────────────
-  if (sesion.paso === "cita_documento") {
-    const doc = text?.trim().replace(/\D/g, "");
-    if (doc && doc.length >= 5 && doc.length <= 12) {
-      await saveSession(from, { paso: "cita_nombre", datos: { ...sesion.datos, documento: doc } });
-      await sendText(from, `✅ Documento: *${doc}*\n\nAhora escribe tu *nombre completo:*`);
-    } else if (!doc || doc.length < 5) {
-      await sendText(from, "⚠️ El documento debe tener al menos 5 dígitos. Intenta de nuevo:");
-    } else {
-      await sendText(from, "⚠️ Documento demasiado largo. Verifica e intenta de nuevo:");
+  // ── Paso 1 de documentos: Cédula / Tarjeta de Identidad ─────
+  if (sesion.paso === "cita_doc_cedula") {
+    if (!mediaId) {
+      await sendText(from,
+        `📷 Por favor envía una foto de tu *cédula* (CC) o *tarjeta de identidad* (TI).\n` +
+        `_Sin borrosidad, buena luz, todo el documento visible._`
+      );
+      return;
+    }
+
+    await sendText(from, "🔍 Verificando tu documento de identidad... ⏳");
+
+    try {
+      const resultado = await procesarDocAPI(from, mediaId);
+
+      if (resultado.legible === false) {
+        await sendText(from,
+          `📷 No pudimos leer tu documento.\n\n` +
+          `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
+          `Intenta de nuevo con:\n• Buena iluminación 💡\n• Sin movimiento\n` +
+          `• Todo el documento visible\n• Sobre superficie oscura y plana`
+        );
+        return; // Queda en cita_doc_cedula
+      }
+
+      // Extraer datos de la cédula
+      const datos   = resultado.datos || {};
+      const nombre  = datos.nombre   || null;
+      const docNum  = datos.cedula   || null;
+
+      // Actualizar perfil del paciente con los datos extraídos
+      const paciente = await obtenerPaciente(from);
+      if (paciente) {
+        const update = {};
+        if (nombre) update.nombre    = nombre;
+        if (docNum) update.documento = docNum;
+        await actualizarPacienteAPI(paciente.id, update);
+      }
+
+      const msgConf = nombre && docNum
+        ? `✅ *Identidad verificada*\n\n👤 *${nombre}*\n🪪 ${docNum}`
+        : `✅ Documento de identidad recibido.`;
+
+      await sendText(from,
+        msgConf + `\n\n` +
+        `Ahora envía la foto de tu *autorización EPS* 📄\n` +
+        `_(El documento que tu EPS te entrega para autorizar la cita)_`
+      );
+
+      await saveSession(from, {
+        paso:  "cita_doc_autorizacion",
+        datos: {
+          ...sesion.datos,
+          nombre:       nombre   || sesion.datos.nombre   || "Paciente",
+          documento:    docNum   || sesion.datos.documento || "",
+          logIdCedula:  resultado.logId,
+        },
+      });
+
+    } catch (err) {
+      console.error("❌ procesarDocAPI cédula:", err.message);
+      await sendText(from, "⚠️ Problema procesando el documento. Vuelve a enviarlo:");
     }
     return;
   }
 
-  // ── Nombre ─────────────────────────────────────────────────
-  if (sesion.paso === "cita_nombre") {
-    const nombre = text?.trim();
-    if (!nombre || nombre.length < 3) {
-      await sendText(from, "⚠️ Por favor escribe tu nombre completo (mínimo 3 caracteres):");
+  // ── Paso 2 de documentos: Autorización EPS ───────────────────
+  if (sesion.paso === "cita_doc_autorizacion") {
+    if (!mediaId) {
+      await sendText(from,
+        `📄 Envía la foto de tu *autorización EPS*\n` +
+        `_(El papel que te da la EPS para ir a la cita)_`
+      );
       return;
     }
-    if (/^\d+$/.test(nombre)) {
-      await sendText(from, "⚠️ El nombre no puede ser solo números. Escribe tu nombre completo:");
+
+    await sendText(from, "🔍 Procesando autorización... ⏳");
+
+    try {
+      const resultado = await procesarDocAPI(from, mediaId);
+
+      if (resultado.legible === false) {
+        await sendText(from,
+          `📷 No pudimos leer la autorización.\n\n` +
+          `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
+          `Por favor vuelve a enviarla con buena iluminación.`
+        );
+        return;
+      }
+
+      await sendText(from,
+        `✅ Autorización recibida.\n\n` +
+        `Por último, envía tu *historia clínica* 📋\n` +
+        `_(Si no la tienes disponible, escribe *"omitir"*)_`
+      );
+
+      await saveSession(from, {
+        paso:  "cita_doc_historial",
+        datos: { ...sesion.datos, logIdAutorizacion: resultado.logId },
+      });
+
+    } catch (err) {
+      console.error("❌ procesarDocAPI autorizacion:", err.message);
+      await sendText(from, "⚠️ Problema procesando la autorización. Vuelve a enviarla:");
+    }
+    return;
+  }
+
+  // ── Paso 3 de documentos: Historia clínica (opcional) ────────
+  if (sesion.paso === "cita_doc_historial") {
+    const omitir = ["omitir", "no tengo", "skip", "no"].includes(msg);
+
+    if (!mediaId && !omitir) {
+      await sendText(from,
+        `📋 Envía tu *historia clínica* o escribe *"omitir"* si no la tienes disponible.`
+      );
       return;
     }
-    await saveSession(from, { paso: "cita_sede", datos: { ...sesion.datos, nombre } });
+
+    let logIdHistorial = null;
+
+    if (mediaId) {
+      await sendText(from, "🔍 Procesando historia clínica... ⏳");
+      try {
+        const resultado = await procesarDocAPI(from, mediaId);
+        if (resultado.legible === false) {
+          await sendText(from,
+            `📷 No pudimos leer la historia clínica.\n\n` +
+            `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
+            `Vuelve a enviarla o escribe *"omitir"* para continuar.`
+          );
+          return;
+        }
+        logIdHistorial = resultado.logId;
+        await sendText(from, `✅ Historia clínica recibida.`);
+      } catch (err) {
+        console.error("❌ procesarDocAPI historial:", err.message);
+        // Si falla el procesamiento, continuar de todos modos
+      }
+    }
+
+    const nombre = sesion.datos.nombre || "Paciente";
+    await saveSession(from, {
+      paso:  "cita_sede",
+      datos: { ...sesion.datos, logIdHistorial },
+    });
     await sendText(from, `Gracias, *${nombre}*. 😊\n\nSelecciona la sede para tu cita:`);
     await menuSedesCita(from);
     return;
