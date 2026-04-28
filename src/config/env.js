@@ -16,6 +16,9 @@ const REQUIRED = [
   "META_API_VERSION",
   "META_VERIFY_TOKEN",
   "ANTHROPIC_API_KEY",
+  "CLOUDINARY_CLOUD_NAME",
+  "CLOUDINARY_API_KEY",
+  "CLOUDINARY_API_SECRET",
 ];
 
 const OPTIONAL_DEFAULTS = {
@@ -66,13 +69,19 @@ module.exports = {
   },
 
   gemini: {
-    apiKey:     process.env.GEMINI_API_KEY || "",  // mantenido por compatibilidad
+    apiKey:     process.env.GEMINI_API_KEY || "",  // ya no se usa activamente
     model:      "gemini-1.5-flash",
   },
 
   anthropic: {
     apiKey:     process.env.ANTHROPIC_API_KEY,
-    model:      "claude-haiku-4-5-20251001",  // más económico con visión
+    model:      "claude-haiku-4-5-20251001",
+  },
+
+  cloudinaryConfig: {
+    cloudName:  process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey:     process.env.CLOUDINARY_API_KEY,
+    apiSecret:  process.env.CLOUDINARY_API_SECRET,
   },
 
   bcryptRounds:  parseInt(process.env.BCRYPT_ROUNDS),
