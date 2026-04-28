@@ -136,18 +136,35 @@ async function handle(req, res) {
     const sesionBot = await getSession(from).catch(() => ({ paso: "inicio", datos: {} }));
     const botHandlesMedia = mediaId && DOC_STEPS.includes(sesionBot.paso);
 
-    // Si el bot está esperando un documento, descargar la imagen
-    // AHORA (mientras el token de Meta es válido y la URL no expiró)
-    // y cachearla en Redis para que el bot la use sin re-descargar.
+    // Si el bot está esperando un documento:
+    //  1. Descargar la imagen inmediatamente (antes de que Meta expire la URL)
+    //  2. Subir a Cloudinary (URL permanente para que el asesor la vea después)
+    //  3. Cachear en Redis (TTL 5min) para que el bot la use sin re-descargar
     if (botHandlesMedia) {
       try {
         const { descargarMediaMeta } = require("../documents/documents.service");
+        const { subirImagen }        = require("../../../config/cloudinary");
+
         const { base64, mimeType } = await descargarMediaMeta(mediaId);
-        await saveMediaCache(mediaId, base64, mimeType);
+
+        // Subir a Cloudinary en segundo plano — no bloquear el flujo del bot
+        // La URL se guarda en Redis junto con el base64
+        let cloudinaryUrl = null;
+        try {
+          const folder   = `documentos/${sesionBot.paso.replace("cita_doc_", "")}`;
+          const publicId = `${from}_${mediaId}`;
+          const result   = await subirImagen(base64, mimeType, { folder, publicId });
+          cloudinaryUrl  = result.url;
+          console.log(`☁️  Cloudinary OK: ${cloudinaryUrl}`);
+        } catch (cloudErr) {
+          console.error("⚠️ Cloudinary upload falló:", cloudErr.message);
+          // Continuar — el asesor verá "sin imagen" en solicitudes
+        }
+
+        await saveMediaCache(mediaId, base64, mimeType, cloudinaryUrl);
         console.log(`📦 Media ${mediaId} cacheado para ${from}`);
       } catch (dlErr) {
         console.error("⚠️ Error pre-descargando media:", dlErr.message);
-        // Continuar igual — el bot intentará descargar él mismo
       }
     }
 
