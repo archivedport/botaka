@@ -143,7 +143,7 @@ async function handle(req, res) {
     if (botHandlesMedia) {
       try {
         const { descargarMediaMeta } = require("../documents/documents.service");
-        const { subirImagen }        = require("../../../config/cloudinary");
+        const { subirImagen }        = require("../../config/cloudinary");
 
         const { base64, mimeType } = await descargarMediaMeta(mediaId);
 
