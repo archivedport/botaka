@@ -1,7 +1,7 @@
 {
   "name": "ips-salud-vida-backend",
   "version": "1.0.0",
-  "description": "Backend API + WhatsApp Bot — IPS Salud Vida",
+  "description": "Backend API + WhatsApp Bot \u2014 IPS Salud Vida",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -24,7 +24,8 @@
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "cloudinary": "^2.5.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
