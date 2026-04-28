@@ -20,8 +20,12 @@ async function processDocument(req, res) {
       return res.status(400).json({ error: "mediaId es obligatorio." });
     }
 
+    // Si el bot pre-descargó la imagen, pasarla directamente
+    // para saltarse la descarga de Meta (evita 404 por URLs expiradas)
     const resultado = await docSvc.procesarDocumento({
       mediaId,
+      base64:     req.body.base64   || null,
+      mimeType:   req.body.mimeType || null,
       pacienteId: pacienteId || null,
       asesorId:   req.usuario.id,
     });
