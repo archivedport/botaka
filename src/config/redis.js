@@ -159,10 +159,33 @@ async function getPendingAsesorRequests() {
   }));
 }
 
+// ── Cache de media (imágenes WhatsApp) ───────────────────────
+//  TTL corto (5 min) — solo mientras el bot procesa el documento
+
+async function saveMediaCache(mediaId, base64, mimeType) {
+  await redis.set(
+    `ips:media:${mediaId}`,
+    JSON.stringify({ base64, mimeType }),
+    "EX", 300  // 5 minutos
+  );
+}
+
+async function getMediaCache(mediaId) {
+  const raw = await redis.get(`ips:media:${mediaId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function delMediaCache(mediaId) {
+  await redis.del(`ips:media:${mediaId}`);
+}
+
 module.exports = {
   redis,
   KEY,
   TTL,
+  saveMediaCache,
+  getMediaCache,
+  delMediaCache,
   getChatStatus,
   setChatStatus,
   getChatAsesor,
