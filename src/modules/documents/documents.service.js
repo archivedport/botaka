@@ -196,61 +196,64 @@ async function verificarCalidadDocumento(base64, mimeType) {
  * @param {string}  [opts.asesorId]
  * @returns {object} { logId, datos, confianza }
  */
-async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, pacienteId, asesorId }) {
-  // 1. Descargar imagen de Meta (solo si no se pasó ya descargada)
-  //    Cuando viene de procesarDocumentoAutomatico ya tenemos los datos,
-  //    así evitamos descargar dos veces la misma imagen.
+/**
+ * Verifica la calidad de un documento y lo registra en LogIA.
+ * Nueva lógica (v2): Solo verificar calidad — NO extraer datos.
+ * El asesor ve la imagen original en solicitudes.html.
+ */
+async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinaryUrl, pacienteId, asesorId }) {
+  // 1. Descargar si no viene pre-descargado
   let base64 = b64, mimeType = mt;
   if (!base64) {
-    const dl  = await descargarMediaMeta(mediaId);
-    base64    = dl.base64;
-    mimeType  = dl.mimeType;
+    const dl = await descargarMediaMeta(mediaId);
+    base64   = dl.base64;
+    mimeType = dl.mimeType;
   }
 
-  console.log(`📄 procesarDocumento: base64=${!!base64} mimeType=${mimeType} mediaId=${mediaId}`);
+  console.log(`📄 procesarDocumento: base64=${!!base64} mimeType=${mimeType} cloudinary=${!!cloudinaryUrl}`);
 
-  // 2. Analizar con Gemini (extracción completa)
-  //    El quality check se hace en webhook.controller para el auto-proceso,
-  //    y en bot.js para el flujo guiado de agendamiento.
-  const textoGemini = await analizarConGemini(base64, mimeType);
+  // 2. Verificar calidad con Claude (prompt ligero)
+  const calidad = await verificarCalidadDocumento(base64, mimeType);
 
-  // 3. Parsear JSON
-  const parsed = parsearRespuesta(textoGemini);
-
-  // 4. Guardar en LogIA
-  const log = await prisma.logIA.create({
-    data: {
-      mediaId,
-      pacienteId:     pacienteId || null,
-      asesorId:       asesorId   || null,
-      tipoDocumento:  parsed.tipoDocumento || "OTRO",
-      resultadoRaw:   { texto: textoGemini },
-      resultadoParsed: parsed,
-      confianza:      typeof parsed.confianza === "number" ? parsed.confianza : null,
-    },
-  });
-
-  // 5. Si hay paciente y confianza alta, sugerir actualización automática
-  let sugerenciaActualizacion = null;
-  if (pacienteId && parsed.confianza >= 0.85) {
-    sugerenciaActualizacion = {
-      nombre:    parsed.nombre     || undefined,
-      documento: parsed.cedula     || undefined,
-      eps:       parsed.eps        || undefined,
-      vigenciaEPS: parsed.vigencia
-        ? new Date(parsed.vigencia)
-        : undefined,
+  if (!calidad.legible) {
+    return {
+      legible:       false,
+      problema:      calidad.problema || "La imagen no es suficientemente clara.",
+      logId:         null,
+      cloudinaryUrl: null,
     };
   }
 
+  // 3. Guardar en LogIA — tipo detectado por Claude, sin extracción de campos
+  const tipoMap = {
+    cedula:        "CEDULA",
+    carnet_eps:    "CARNET_EPS",
+    orden_medica:  "ORDEN_MEDICA",
+    resultado_lab: "RESULTADO_LAB",
+  };
+  const tipoDoc = tipoMap[calidad.tipo?.toLowerCase()] || "OTRO";
+
+  const log = await prisma.logIA.create({
+    data: {
+      mediaId,
+      pacienteId:      pacienteId || null,
+      asesorId:        asesorId   || null,
+      tipoDocumento:   tipoDoc,
+      resultadoRaw:    { cloudinaryUrl: cloudinaryUrl || null, tipo: calidad.tipo },
+      resultadoParsed: { legible: true, tipo: calidad.tipo },
+      confianza:       1.0,
+    },
+  });
+
   return {
-    logId:                 log.id,
-    datos:                 parsed,
-    confianza:             parsed.confianza || 0,
-    sugerenciaActualizacion,
-    requiereValidacion:    (parsed.confianza || 0) < 0.85,
+    legible:       true,
+    problema:      null,
+    logId:         log.id,
+    cloudinaryUrl: cloudinaryUrl || null,
+    tipoDocumento: tipoDoc,
   };
 }
+
 
 /**
  * El asesor valida y confirma los datos extraídos por IA.
