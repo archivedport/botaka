@@ -53,12 +53,17 @@ async function obtenerHistorial(phone, { page = 1, limit = 50 } = {}) {
     prisma.mensaje.count({ where: { pacienteId: paciente.id } }),
     prisma.mensaje.findMany({
       where:   { pacienteId: paciente.id },
-      orderBy: { createdAt: "asc" },
+      // DESC para traer los más RECIENTES primero, luego invertimos
+      // para que el frontend los muestre en orden cronológico correcto
+      orderBy: { createdAt: "desc" },
       skip:    (page - 1) * limit,
       take:    limit,
       include: { paciente: { select: { nombre: true } } },
     }),
   ]);
+
+  // Invertir: DESC traía [nuevo...viejo], necesitamos [viejo...nuevo]
+  mensajes.reverse();
 
   return { total, page, limit, mensajes };
 }
