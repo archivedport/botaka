@@ -159,13 +159,30 @@ async function getPendingAsesorRequests() {
   }));
 }
 
-// ── Estado global del bot ─────────────────────────────────────
-//  Cuando el admin apaga el bot, todos los chats entrantes
-//  van a MANUAL automáticamente hasta que lo reactive.
+// ── Cache de media (imágenes WhatsApp) ───────────────────────
+//  TTL corto (5 min) — solo mientras el bot procesa el documento
 
+async function saveMediaCache(mediaId, base64, mimeType, cloudinaryUrl = null) {
+  await redis.set(
+    `ips:media:${mediaId}`,
+    JSON.stringify({ base64, mimeType, cloudinaryUrl }),
+    "EX", 300  // 5 minutos
+  );
+}
+
+async function getMediaCache(mediaId) {
+  const raw = await redis.get(`ips:media:${mediaId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function delMediaCache(mediaId) {
+  await redis.del(`ips:media:${mediaId}`);
+}
+
+// ── Estado global del bot ─────────────────────────────────────
 async function getBotGlobalStatus() {
   const val = await redis.get("ips:bot:global");
-  return val === "OFF" ? "OFF" : "ON"; // ON por defecto
+  return val === "OFF" ? "OFF" : "ON";
 }
 
 async function setBotGlobalStatus(status) {
@@ -176,6 +193,9 @@ module.exports = {
   redis,
   KEY,
   TTL,
+  saveMediaCache,
+  getMediaCache,
+  delMediaCache,
   getChatStatus,
   setChatStatus,
   getChatAsesor,
