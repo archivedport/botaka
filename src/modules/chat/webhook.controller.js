@@ -14,7 +14,7 @@
 "use strict";
 
 const axios = require("axios");
-const { getChatStatus, getSession, saveMediaCache } = require("../../config/redis");
+const { getChatStatus, getSession, saveMediaCache, getBotGlobalStatus } = require("../../config/redis");
 const { emitirMensajePaciente } = require("../../socket/socket");
 const { meta }               = require("../../config/env");
 const prisma                 = require("../../config/database");
@@ -105,7 +105,19 @@ async function handle(req, res) {
     });
 
     // ── Determinar si el chat está en modo MANUAL ────────────
-    const status = await getChatStatus(from);
+    // Si el bot global está OFF, poner el chat en MANUAL automáticamente
+    const botGlobal = await getBotGlobalStatus();
+    if (botGlobal === "OFF") {
+      const { setChatStatus } = require("../../config/redis");
+      const estadoActual = await getChatStatus(from);
+      if (estadoActual !== "MANUAL") {
+        // Poner en manual sin asesor asignado — cualquier asesor puede tomarlo
+        await setChatStatus(from, "MANUAL", null);
+        console.log(`🔴 Bot OFF → chat ${from} puesto en MANUAL automáticamente`);
+      }
+    }
+
+    const status = botGlobal === "OFF" ? "MANUAL" : await getChatStatus(from);
 
     // ── Guardar y emitir mensaje del paciente SIEMPRE ───────────
     if (texto) {
