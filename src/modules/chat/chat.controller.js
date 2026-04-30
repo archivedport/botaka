@@ -92,8 +92,25 @@ async function sendMessage(req, res) {
     }
 
     // Solo permitir si el asesor tiene control MANUAL de ese chat
-    const status   = await getChatStatus(phone);
-    const asesorId = await getChatAsesor(phone);
+    let status   = await getChatStatus(phone);
+    let asesorId = await getChatAsesor(phone);
+
+    // Si bot global está OFF y el chat está en MANUAL sin asesor asignado,
+    // tomar control automáticamente — no obligar al asesor a hacer toggle primero
+    if (status === "MANUAL" && !asesorId) {
+      const { getBotGlobalStatus } = require("../../config/redis");
+      const botGlobal = await getBotGlobalStatus();
+      if (botGlobal === "OFF") {
+        await setChatStatus(phone, "MANUAL", req.usuario.id);
+        asesorId = req.usuario.id;
+        // Notificar al panel del cambio de asesor
+        try {
+          getIO().to(`chat:${phone}`).emit("chat:status_changed", {
+            phone, status: "MANUAL", asesorId: req.usuario.id,
+          });
+        } catch {}
+      }
+    }
 
     if (status !== "MANUAL" || asesorId !== req.usuario.id) {
       return res.status(403).json({
