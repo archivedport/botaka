@@ -120,6 +120,43 @@ router.get("/api/usuarios", requireAuth, requireRol("ADMIN"), async (req, res) =
   return res.json({ usuarios: lista });
 });
 
+// ── Control global del bot (solo ADMIN) ──────────────────────
+//  GET  /api/admin/bot-status  — consultar estado ON/OFF
+//  PATCH /api/admin/bot-status — cambiar estado
+router.get("/api/admin/bot-status", requireAuth, requireRol("ADMIN"), async (_req, res) => {
+  try {
+    const { getBotGlobalStatus } = require("./config/redis");
+    const status = await getBotGlobalStatus();
+    return res.json({ status });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/api/admin/bot-status", requireAuth, requireRol("ADMIN"), async (req, res) => {
+  try {
+    const { setBotGlobalStatus } = require("./config/redis");
+    const { getIO }              = require("./socket/socket");
+    const { status } = req.body;
+
+    if (!["ON", "OFF"].includes(status)) {
+      return res.status(400).json({ error: "status debe ser ON o OFF." });
+    }
+
+    await setBotGlobalStatus(status);
+
+    // Notificar a todos los paneles abiertos en tiempo real
+    try {
+      getIO().to("asesores").emit("bot:status_global", { status });
+    } catch {}
+
+    console.log(`🤖 Bot global → ${status} (por ${req.usuario?.email})`);
+    return res.json({ ok: true, status });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Sedes (públicas para el bot) ──────────────────────────────
 router.get("/api/sedes", async (_req, res) => {
   const prisma = require("./config/database");
