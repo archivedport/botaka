@@ -34,13 +34,28 @@ async function subirImagen(base64, mimeType, { folder = "documentos", publicId }
 
   const result = await cloudinary.uploader.upload(dataUri, {
     folder,
-    public_id:       publicId || undefined,
-    resource_type:   "image",
-    // Sin transformaciones — guardar como viene de WhatsApp
-    // El asesor necesita ver el documento original, no una versión reducida
-    overwrite:       true,
-    // Tags para facilitar búsqueda en el dashboard de Cloudinary
-    tags:            ["documento_medico", "ips_ser_funcional"],
+    public_id:     publicId || undefined,
+    resource_type: "image",
+    overwrite:     true,
+    tags:          ["documento_medico", "ips_ser_funcional"],
+
+    // ── Optimización de almacenamiento ─────────────────────
+    // Comprimir a JPEG calidad 85% — suficiente para leer documentos
+    // Reduce ~70% del tamaño sin afectar legibilidad
+    transformation: [
+      {
+        quality:  "85",
+        fetch_format: "jpg",
+        // Máx 1600px en el lado más largo — resolución suficiente para leer texto
+        width:    1600,
+        height:   1600,
+        crop:     "limit",   // solo reduce, nunca agranda
+      }
+    ],
+
+    // Deshabilitar backup automático — no necesitamos versiones históricas
+    // de documentos médicos en Cloudinary (ya están en LogIA de PostgreSQL)
+    backup:     false,
   });
 
   return {
