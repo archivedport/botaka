@@ -201,17 +201,18 @@ async function aprobarSolicitud(citaId, { asesorId, nota = "" }) {
   mensaje += `Por favor llega 10 minutos antes de tu cita. ¡Nos vemos pronto! 😊`;
 
   await sendWhatsApp(phone, mensaje);
-
-  // Persistir en BD para que aparezca en el historial del panel
   await guardarMensaje({ phone, de: "BOT", texto: mensaje });
-
-  // Emitir al panel en tiempo real — dibuja la burbuja en chats.html
   try {
     const io = getIO();
     const payload = { phone, from: "BOT", mensaje, timestamp: new Date().toISOString() };
     io.to(`chat:${phone}`).emit("chat:new_message", payload);
     io.to("asesores").emit("chat:list_update", payload);
   } catch {}
+
+  // Enviar menú de opciones post-confirmación
+  const menuMsg = "¿Deseas hacer algo más?\n\n📋 *Mis citas* — Ver tus citas activas\n📅 *Nueva cita* — Agendar otra cita\n🏠 *Menú principal* — Volver al inicio\n\nEscribe *Hola* para ver el menú.";
+  await sendWhatsApp(phone, menuMsg);
+  await guardarMensaje({ phone, de: "BOT", texto: menuMsg });
 
   return cita;
 }
@@ -298,16 +299,18 @@ async function denegarSolicitud(citaId, { asesorId, nota = "" }) {
     + `o solicita hablar con un asesor. 🙏`;
 
   await sendWhatsApp(phone, mensaje);
-
-  // Persistir en BD + emitir al panel
   await guardarMensaje({ phone, de: "BOT", texto: mensaje });
-
   try {
     const io = getIO();
     const payload = { phone, from: "BOT", mensaje, timestamp: new Date().toISOString() };
     io.to(`chat:${phone}`).emit("chat:new_message", payload);
     io.to("asesores").emit("chat:list_update", payload);
   } catch {}
+
+  // Ofrecer opciones tras el rechazo
+  const menuMsg = "Si deseas reagendar o tienes preguntas, escribe *Hola* para volver al menú principal. 🙏";
+  await sendWhatsApp(phone, menuMsg);
+  await guardarMensaje({ phone, de: "BOT", texto: menuMsg });
 
   return cita;
 }
