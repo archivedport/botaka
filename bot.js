@@ -394,11 +394,10 @@ const ESTADO_LABEL = {
 };
 
 const ESP_CORTA = {
-  "Medicina General": "Med. General",
-  "Odontología":      "Odontología",
-  "Psicología":       "Psicología",
-  "Nutrición":        "Nutrición",
-  "Especialistas":    "Especialista",
+  "Terapia Física":       "T. Física",
+  "Terapia Ocupacional":  "T. Ocupacional",
+  "Fonoaudiología":       "Fonoaudiología",
+  "Terapia Respiratoria": "T. Respiratoria",
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -493,7 +492,7 @@ function toYMD(date) {
 
 async function menuPrincipal(to) {
   await sendButtons(to, {
-    header:  "🏥 IPS Salud Vida",
+    header:  "🏥 Ser Funcional I.P.S",
     body:    "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
     footer:  "Selecciona una opción",
     buttons: [
@@ -514,15 +513,14 @@ async function menuPrincipal(to) {
 async function menuEspecialidades(to) {
   await sendList(to, {
     header:      "📅 Agendar Cita",
-    body:        "Selecciona el tipo de servicio:",
-    footer:      "IPS Salud Vida",
+    body:        "Selecciona el tipo de terapia:",
+    footer:      "Ser Funcional — Unidad Integral I.P.S",
     buttonLabel: "Ver servicios",
-    sections: [{ title: "Servicios disponibles", rows: [
-      { id: "esp_medicina",     title: "🩺 Medicina General" },
-      { id: "esp_odonto",       title: "🦷 Odontología"      },
-      { id: "esp_psicologia",   title: "🧠 Psicología"       },
-      { id: "esp_nutricion",    title: "🥗 Nutrición"        },
-      { id: "esp_especialista", title: "👨‍⚕️ Especialistas" },
+    sections: [{ title: "Terapias disponibles", rows: [
+      { id: "esp_fisica",       title: "🦴 Terapia Física",       description: "Rehabilitación física y motora" },
+      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional",  description: "Actividades de la vida diaria"  },
+      { id: "esp_fono",         title: "🗣️ Fonoaudiología",       description: "Lenguaje, voz y deglución"      },
+      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria", description: "Solo nebulizaciones (trae el medicamento)" },
     ]}],
   });
 }
@@ -530,17 +528,20 @@ async function menuEspecialidades(to) {
 async function menuEPS(to, especialidad) {
   await sendList(to, {
     header:      `🩺 ${especialidad}`,
-    body:        "¿Con qué EPS estás afiliado?",
-    footer:      "IPS Salud Vida",
-    buttonLabel: "Seleccionar EPS",
-    sections: [{ title: "EPS / Aseguradora", rows: [
-      { id: "eps_sura",       title: "Sura"                 },
-      { id: "eps_sanitas",    title: "Sanitas"              },
-      { id: "eps_nueva",      title: "Nueva EPS"            },
-      { id: "eps_coosalud",   title: "Coosalud"             },
-      { id: "eps_particular", title: "Particular (sin EPS)" },
-      { id: "eps_otra",       title: "Otra"                 },
-    ]}],
+    body:        "¿Con qué EPS o régimen estás afiliado?",
+    footer:      "Ser Funcional — Unidad Integral I.P.S",
+    buttonLabel: "Ver opciones",
+    sections: [{
+      title: "EPS con convenio",
+      rows: [
+        { id: "eps_nueva_contributivo", title: "Nueva EPS Contributivo",  description: "Régimen contributivo" },
+        { id: "eps_nueva_subsidiado",   title: "Nueva EPS Subsidiado",    description: "Régimen subsidiado"   },
+        { id: "eps_gestar",             title: "Gestar Salud",            description: "Contributivo / Subsidiado" },
+        { id: "eps_salud_total",        title: "Salud Total",             description: "Solo adultos, orden a Gestar" },
+        { id: "eps_amigos",             title: "Fundación Amigos Salud",  description: "Con autorización previa" },
+        { id: "eps_particular",         title: "Particular",              description: "Pago directo en sede" },
+      ],
+    }],
   });
 }
 
@@ -894,14 +895,16 @@ async function handleBot(from, text, buttonId, mediaId) {
 
     } else if (payload === "menu_horarios") {
       await sendText(from,
-        `🕐 *Horarios de atención:*\n\n` +
-        `🏢 *Montería* — Lun–Vie 11:00–11:30 · tarde 17:00–17:30\n` +
-        `🏢 *Tierralta* — Lun/Mié/Vie tarde 16:40–17:10 · Mar/Jue mañana y tarde\n` +
-        `🏢 *Ciénaga de Oro* — Lun–Vie 11:00–11:20 · tarde 16:50–17:00\n` +
-        `🏢 *Cereté* — Lun/Mié/Vie 11:00–11:30 · todos tarde 13:30–15:30\n` +
-        `🏢 *San Carlos* — Solo Mar y Jue 7:40–10:00\n` +
-        `🏢 *Valencia* — Solo Lun/Mié/Vie 10:40–11:00\n\n` +
-        `⚠️ Domingos y festivos: sin atención.`
+        `🕐 *Horarios de atención — Ser Funcional I.P.S*\n\n` +
+        `Ofrecemos: Terapia Física, Terapia Ocupacional, Fonoaudiología y Terapia Respiratoria (nebulizaciones).\n\n` +
+        `🏢 *Montería* — Lun–Vie: 11:00–11:30 · tarde 17:00–17:30\n` +
+        `🏢 *Tierralta* — Lun/Mié/Vie: tarde 16:40–17:10 · Mar/Jue: mañana y tarde\n` +
+        `🏢 *Ciénaga de Oro* — Lun–Vie: 11:00–11:20 · tarde 16:50–17:00\n` +
+        `🏢 *Cereté* — Lun/Mié/Vie: 11:00–11:30 · Mar/Jue: tarde 13:30–15:30\n` +
+        `🏢 *San Carlos* — Solo mar y jue: 7:40–10:00\n` +
+        `🏢 *Valencia* — Solo lun, mié y vie: 10:40–11:00\n\n` +
+        `⚠️ Domingos y festivos: sin atención.\n` +
+        `📋 Todas las citas requieren *orden médica vigente* y se agendan previa validación de documentos.`
       );
       await sendButtons(from, {
         body:    "¿Deseas hacer algo más?",
@@ -1022,17 +1025,16 @@ async function handleBot(from, text, buttonId, mediaId) {
   // ── Especialidad ───────────────────────────────────────────
   if (sesion.paso === "cita_especialidad") {
     const ESP = {
-      esp_medicina:     "Medicina General",
-      esp_odonto:       "Odontología",
-      esp_psicologia:   "Psicología",
-      esp_nutricion:    "Nutrición",
-      esp_especialista: "Especialistas",
+      esp_fisica:       "Terapia Física",
+      esp_ocupacional:  "Terapia Ocupacional",
+      esp_fono:         "Fonoaudiología",
+      esp_respiratoria: "Terapia Respiratoria",
     };
     if (ESP[payload]) {
       await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
       await menuEPS(from, ESP[payload]);
     } else {
-      await sendText(from, "Por favor selecciona una especialidad de la lista 👆");
+      await sendText(from, "Por favor selecciona el tipo de terapia de la lista 👆");
       await menuEspecialidades(from);
     }
     return;
@@ -1041,25 +1043,122 @@ async function handleBot(from, text, buttonId, mediaId) {
   // ── EPS ────────────────────────────────────────────────────
   if (sesion.paso === "cita_eps") {
     const EPS = {
-      eps_sura:       "Sura",
-      eps_sanitas:    "Sanitas",
-      eps_nueva:      "Nueva EPS",
-      eps_coosalud:   "Coosalud",
-      eps_particular: "Particular",
-      eps_otra:       "Otra",
+      eps_nueva_contributivo: "Nueva EPS Contributivo",
+      eps_nueva_subsidiado:   "Nueva EPS Subsidiado",
+      eps_gestar:             "Gestar Salud",
+      eps_salud_total:        "Salud Total",
+      eps_amigos:             "Fundación Amigos de la Salud",
+      eps_particular:         "Particular",
     };
-    if (EPS[payload]) {
-      await saveSession(from, { paso: "cita_doc_cedula", datos: { ...sesion.datos, eps: EPS[payload] } });
-      await sendText(from,
-        `✅ EPS: *${EPS[payload]}*\n\n` +
-        `📋 Para verificar tu identidad, envía una foto clara de:\n` +
-        `📷 Tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI)\n\n` +
-        `_Solo el frente. Buena luz, sin borrosa, todo visible._`
-      );
-    } else {
+
+    if (!EPS[payload]) {
       await sendText(from, "Por favor selecciona tu EPS de la lista 👆");
       await menuEPS(from, sesion.datos.especialidad);
+      return;
     }
+
+    const epsNombre = EPS[payload];
+
+    // ── Caso especial: Salud Total — solo adultos con orden a Gestar ──
+    if (payload === "eps_salud_total") {
+      await sendText(from,
+        `⚠️ *Importante — Salud Total*\n\n` +
+        `Atendemos pacientes de Salud Total *únicamente* si:\n\n` +
+        `✅ Es mayor de edad (18 años o más)\n` +
+        `✅ La orden médica está *dirigida a Gestar Salud*\n\n` +
+        `¿Tu orden cumple estas condiciones?`
+      );
+      await sendButtons(from, {
+        body: "¿La orden está dirigida a Gestar Salud?",
+        buttons: [
+          { id: "salud_total_si", title: "✅ Sí, cumple"       },
+          { id: "salud_total_no", title: "❌ No / No estoy seguro" },
+        ],
+      });
+      await saveSession(from, { paso: "cita_eps_salud_total", datos: { ...sesion.datos, eps: epsNombre } });
+      return;
+    }
+
+    // ── Caso especial: Particular → pasa al asesor ────────────
+    if (payload === "eps_particular") {
+      await sendText(from,
+        `💳 *Paciente Particular*\n\n` +
+        `Para atención particular, el costo varía según el tipo de terapia y la cantidad de sesiones.\n\n` +
+        `Te conectaremos con una asesora para darte el valor exacto y coordinar tu cita. 😊\n\n` +
+        `*¿Cuál es el motivo de tu consulta o qué tipo de terapia necesitas?*\n_(Descríbelo brevemente)_`
+      );
+      await saveSession(from, { paso: "particular_motivo", datos: { ...sesion.datos, eps: epsNombre } });
+      return;
+    }
+
+    // ── Caso especial: Fundación Amigos de la Salud ───────────
+    if (payload === "eps_amigos") {
+      await sendText(from,
+        `ℹ️ *Fundación Amigos de la Salud*\n\n` +
+        `Los pacientes de Fundación Amigos de la Salud son admisionados directamente en la fundación y llegan con autorización previa.\n\n` +
+        `Si ya tienes tu autorización, continúa. Si no, acércate primero a la fundación. 👍`
+      );
+    }
+
+    // Flujo normal con documentos
+    await saveSession(from, { paso: "cita_doc_cedula", datos: { ...sesion.datos, eps: epsNombre } });
+    await sendText(from,
+      `✅ EPS: *${epsNombre}*\n\n` +
+      `📋 Para verificar tu identidad, envía una foto clara de:\n` +
+      `📷 Tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI)\n\n` +
+      `_Solo el frente. Buena luz, sin borrosa, todo visible._`
+    );
+    return;
+  }
+
+  // ── Salud Total: confirmación de requisitos ──────────────────
+  if (sesion.paso === "cita_eps_salud_total") {
+    if (payload === "salud_total_si") {
+      await saveSession(from, { paso: "cita_doc_cedula", datos: sesion.datos });
+      await sendText(from,
+        `✅ Perfecto.\n\n` +
+        `📋 Envía una foto clara de tu *cédula de ciudadanía* (CC)\n` +
+        `_Solo el frente. Buena luz, sin borrosa, todo visible._`
+      );
+    } else if (payload === "salud_total_no") {
+      await sendText(from,
+        `ℹ️ Si tu orden médica *no está dirigida a Gestar Salud* o eres menor de edad con Salud Total, lamentablemente no podemos atenderte directamente.\n\n` +
+        `Te recomendamos comunicarte con tu EPS para que te remitan correctamente. 🙏`
+      );
+      await clearSession(from);
+      await saveSession(from, { paso: "menu", datos: {} });
+      await menuPrincipal(from);
+    } else {
+      await sendButtons(from, {
+        body: "¿La orden está dirigida a Gestar Salud y eres mayor de edad?",
+        buttons: [
+          { id: "salud_total_si", title: "✅ Sí, cumple"          },
+          { id: "salud_total_no", title: "❌ No / No estoy seguro" },
+        ],
+      });
+    }
+    return;
+  }
+
+  // ── Paciente Particular: motivo → asesor ─────────────────────
+  if (sesion.paso === "particular_motivo") {
+    const motivo = text?.trim();
+    if (!motivo || motivo.length < 5) {
+      await sendText(from, "Por favor descríbenos brevemente qué tipo de terapia necesitas ✍️:");
+      return;
+    }
+    await sendText(from,
+      `✅ Gracias por la información.\n\n` +
+      `Una asesora se comunicará contigo para darte el valor de la terapia y coordinar tu cita. 😊\n\n` +
+      `_Motivo registrado: ${motivo}_\n\n` +
+      `🔔 Tiempo de respuesta habitual: en horario de atención.`
+    );
+    await saveSession(from, { paso: "con_asesor", datos: { ...sesion.datos, motivo } });
+    await axios.post(
+      `${API_BASE}/api/chat/request-asesor`,
+      { phone: from, motivo: `PARTICULAR — ${sesion.datos.especialidad || "terapia"}: ${motivo}` },
+      { headers: await apiHeaders(), timeout: 3000 }
+    ).catch(() => {});
     return;
   }
 
@@ -1223,11 +1322,37 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
 
     const nombre = sesion.datos.nombre || "Paciente";
+
+    // Crear la cita como PENDIENTE — la asesor asigna sede según IPS primaria
+    // No pedimos sede al paciente: dependiendo de su ubicación/IPS primaria
+    // la asesor determina qué sede le queda más cercana
+    await sendText(from,
+      `✅ *Documentos recibidos.*\n\n` +
+      `Gracias *${nombre}*, hemos recibido tu información. 😊\n\n` +
+      `📋 *¿En qué municipio o zona vives?*\n` +
+      `_Esto nos ayuda a asignarte la sede más cercana._`
+    );
     await saveSession(from, {
-      paso:  "cita_sede",
+      paso:  "cita_ubicacion",
       datos: { ...sesion.datos, logIdHistorial, urlHistorial },
     });
-    await sendText(from, `Gracias, *${nombre}*. 😊\n\nSelecciona la sede para tu cita:`);
+    return;
+  }
+
+  // ── Ubicación del paciente (para asignar sede) ────────────────
+  if (sesion.paso === "cita_ubicacion") {
+    const ubicacion = text?.trim();
+    if (!ubicacion || ubicacion.length < 3) {
+      await sendText(from, "Por favor escribe el municipio o zona donde vives 📍:");
+      return;
+    }
+
+    const nombre = sesion.datos.nombre || "Paciente";
+    await saveSession(from, {
+      paso:  "cita_sede",
+      datos: { ...sesion.datos, ubicacion },
+    });
+    await sendText(from, `📍 Ubicación registrada: *${ubicacion}*\n\nSelecciona la sede para tu cita:`);
     await menuSedesCita(from);
     return;
   }
@@ -1354,15 +1479,18 @@ async function handleBot(from, text, buttonId, mediaId) {
         : slot.label.split(" — ")[0];
 
       await sendText(from,
-        `🎉 *¡Cita registrada exitosamente!*\n\n` +
+        `🎉 *¡Solicitud registrada!*\n\n` +
         `👤 ${sesion.datos.nombre}\n` +
         `🪪 ${sesion.datos.documento}\n` +
         `🏥 ${sesion.datos.especialidad} · ${sesion.datos.eps}\n` +
         `📅 ${diaSlot} a las *${horaSlot}*\n` +
         `📍 ${sesion.datos.sede}\n` +
         `🆔 Ref: \`${cita.id.slice(-8).toUpperCase()}\`\n\n` +
-        `⏳ Tu solicitud está *pendiente de aprobación*.\n` +
-        `Recibirás un mensaje cuando sea confirmada o denegada.`
+        `⏳ *Pendiente de aprobación.*\n\n` +
+        `Nuestra asesora revisará tu orden médica y documentos para confirmar la cita. ` +
+        `Si es necesario, puede ajustar la sede según tu ubicación. \n\n` +
+        `📱 Recibirás un mensaje con la confirmación o si necesitamos algo adicional.\n` +
+        `⚠️ Recuerda traer los documentos *físicos* el día de tu cita para la admisión.`
       );
     } catch (err) {
       const esColision = err.response?.status === 409;
