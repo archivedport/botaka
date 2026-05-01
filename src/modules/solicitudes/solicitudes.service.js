@@ -28,6 +28,25 @@ const waHeaders = () => ({
   "Content-Type": "application/json",
 });
 
+async function sendWhatsAppButton(to, body, buttonTitle = "🏠 Menú principal") {
+  try {
+    await axios.post(
+      waUrl(),
+      {
+        messaging_product: "whatsapp", to, type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: body },
+          action: { buttons: [{ type: "reply", reply: { id: "menu_principal", title: buttonTitle } }] },
+        },
+      },
+      { headers: waHeaders(), timeout: 8000 }
+    );
+  } catch (err) {
+    console.error(`❌ WA button FALLÓ → ${to}:`, err.response?.data || err.message);
+  }
+}
+
 async function sendWhatsApp(to, body) {
   const url = waUrl();
   console.log(`📤 WA solicitud → ${to} | URL: ${url}`);
@@ -209,10 +228,10 @@ async function aprobarSolicitud(citaId, { asesorId, nota = "" }) {
     io.to("asesores").emit("chat:list_update", payload);
   } catch {}
 
-  // Enviar menú de opciones post-confirmación
-  const menuMsg = "¿Deseas hacer algo más?\n\n📋 *Mis citas* — Ver tus citas activas\n📅 *Nueva cita* — Agendar otra cita\n🏠 *Menú principal* — Volver al inicio\n\nEscribe *Hola* para ver el menú.";
-  await sendWhatsApp(phone, menuMsg);
-  await guardarMensaje({ phone, de: "BOT", texto: menuMsg });
+  // Botón interactivo post-confirmación
+  const menuMsg = "¿Deseas hacer algo más?";
+  await sendWhatsAppButton(phone, menuMsg);
+  await guardarMensaje({ phone, de: "BOT", texto: menuMsg + "\n› 🏠 Menú principal" });
 
   return cita;
 }
@@ -307,10 +326,10 @@ async function denegarSolicitud(citaId, { asesorId, nota = "" }) {
     io.to("asesores").emit("chat:list_update", payload);
   } catch {}
 
-  // Ofrecer opciones tras el rechazo
-  const menuMsg = "Si deseas reagendar o tienes preguntas, escribe *Hola* para volver al menú principal. 🙏";
-  await sendWhatsApp(phone, menuMsg);
-  await guardarMensaje({ phone, de: "BOT", texto: menuMsg });
+  // Botón interactivo post-rechazo
+  const menuMsg = "¿Deseas hacer algo más?";
+  await sendWhatsAppButton(phone, menuMsg);
+  await guardarMensaje({ phone, de: "BOT", texto: menuMsg + "\n› 🏠 Menú principal" });
 
   return cita;
 }
