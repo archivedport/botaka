@@ -491,22 +491,18 @@ function toYMD(date) {
    ============================================================ */
 
 async function menuPrincipal(to) {
-  await sendButtons(to, {
-    header:  "🏥 Ser Funcional I.P.S",
-    body:    "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
-    footer:  "Selecciona una opción",
-    buttons: [
-      { id: "menu_cita",     title: "📅 Agendar cita"  },
-      { id: "menu_miscitas", title: "📋 Mis citas"      },
-      { id: "menu_horarios", title: "🕐 Horarios"       },
-    ],
-  });
-  await sendButtons(to, {
-    body:    "Más opciones:",
-    buttons: [
-      { id: "menu_sedes",  title: "📍 Sedes"              },
-      { id: "menu_asesor", title: "👨‍💼 Hablar con asesor" },
-    ],
+  await sendList(to, {
+    header:      "🏥 Ser Funcional I.P.S",
+    body:        "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
+    footer:      "Unidad Integral I.P.S S.A.S",
+    buttonLabel: "Ver opciones",
+    sections: [{ title: "¿Qué necesitas?", rows: [
+      { id: "menu_cita",     title: "📅 Agendar cita",        description: "Solicita tu cita de terapia"     },
+      { id: "menu_miscitas", title: "📋 Mis citas",           description: "Ver o cancelar tus citas"        },
+      { id: "menu_horarios", title: "🕐 Horarios",            description: "Horarios de atención por sede"   },
+      { id: "menu_sedes",    title: "📍 Sedes",               description: "Información de nuestras sedes"   },
+      { id: "menu_asesor",   title: "👨‍💼 Hablar con asesor", description: "Conectar con un asesor humano"   },
+    ]}],
   });
 }
 
@@ -1508,15 +1504,10 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
 
     await clearSlotSelection(from);
-    await saveSession(from, { paso: "menu", datos: {} });
-    await sendButtons(from, {
-      body:    "¿Deseas hacer algo más?",
-      buttons: [
-        { id: "menu_miscitas",  title: "📋 Mis citas"       },
-        { id: "menu_cita",      title: "📅 Nueva cita"      },
-        { id: "menu_principal", title: "🏠 Menú principal" },
-      ],
-    });
+    // No mostrar "¿Deseas hacer algo más?" aquí.
+    // El paciente recibirá la confirmación o rechazo del asesor,
+    // y en ese momento se le enviará el menú de opciones.
+    await saveSession(from, { paso: "espera_confirmacion", datos: {} });
     return;
   }
 
