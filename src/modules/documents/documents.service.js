@@ -19,17 +19,20 @@ const { meta, gemini, anthropic } = require("../../config/env");
 
 // ── Prompt de extracción ──────────────────────────────────────
 
-const EXTRACTION_PROMPT = `Analiza esta imagen de un documento médico colombiano.
-Extrae los datos y responde ÚNICAMENTE con un JSON válido sin bloques de código, con esta estructura exacta:
+const EXTRACTION_PROMPT = `Analiza esta imagen de un documento médico colombiano para la IPS "Ser Funcional" (rehabilitación funcional).
+
+Extrae los datos y responde ÚNICAMENTE con un JSON válido sin bloques de código:
 {
-  "tipoDocumento": "CEDULA | CARNET_EPS | ORDEN_MEDICA | RESULTADO_LAB | OTRO",
-  "nombre": "Nombre completo o null",
-  "cedula": "Número de cédula o null",
+  "tipoDocumento": "CEDULA | ORDEN_MEDICA | HISTORIA_CLINICA | CARNET_EPS | OTRO",
+  "nombre": "Nombre completo del paciente o null",
+  "cedula": "Número de documento de identidad o null",
   "eps": "Nombre de la EPS o null",
-  "vigencia": "Fecha de vigencia en formato YYYY-MM-DD o null",
-  "numeroAfiliacion": "Número de afiliación EPS o null",
-  "fechaExpedicion": "Fecha expedición documento YYYY-MM-DD o null",
-  "observaciones": "Cualquier dato relevante adicional o null",
+  "fechaOrden": "Fecha de la orden médica en YYYY-MM-DD o null",
+  "diagnostico": "Diagnóstico o motivo de consulta o null",
+  "firmaMedico": "Nombre del médico que firma o null",
+  "tipoMedico": "general | especialista | null",
+  "servicioOrdenado": "Tipo de terapia ordenada (física, ocupacional, fonoaudiología, respiratoria) o null",
+  "observaciones": "Cualquier dato relevante adicional, alertas sobre vigencia o tipo de accidente o null",
   "confianza": 0.0
 }
 Si no puedes leer un campo, usa null. El campo confianza va de 0.0 a 1.0.
@@ -40,22 +43,30 @@ No incluyas texto fuera del JSON.`;
 // extracción completa. Evita pasar imágenes borrosas o inválidas
 // al pipeline de IA y ahorra tokens y tiempo.
 
-const QUALITY_PROMPT = `Analiza esta imagen y determina si es lo suficientemente clara y legible para extraer datos de un documento colombiano (cédula, carnet EPS, orden médica, resultado de laboratorio, etc.).
+const QUALITY_PROMPT = `Analiza esta imagen de un documento médico colombiano para la IPS de rehabilitación funcional "Ser Funcional".
 
-Responde ÚNICAMENTE con un JSON válido, sin bloques de código ni texto adicional:
+Determina si es legible Y válido para agendamiento. Responde ÚNICAMENTE con JSON válido, sin bloques de código:
 {
   "legible": true o false,
-  "tipo": "cédula | carnet_eps | orden_medica | resultado_lab | foto_personal | no_documento | otro",
-  "problema": "descripción breve del problema en español, o null si está legible"
+  "tipo": "cedula | orden_medica | historia_clinica | carnet_eps | foto_personal | no_documento | otro",
+  "problema": "descripción breve en español del problema, o null si está OK",
+  "alertas": []
 }
 
-Considera NO legible si:
-- Está borrosa o desenfocada
-- Muy oscura o sobreexpuesta
-- El documento está cortado (faltan bordes)
-- El ángulo es mayor a 30° (muy inclinada)
-- La resolución no permite leer texto
-- No es un documento (foto de persona, paisaje, etc.)`;
+REGLAS DE LEGIBILIDAD — considera NO legible si:
+- Está borrosa, desenfocada o movida
+- Muy oscura, sobreexpuesta o con reflejo
+- El documento está cortado (faltan bordes importantes)
+- Ángulo mayor a 30° (muy inclinada)
+- Resolución insuficiente para leer texto
+- No es un documento (foto de persona, paisaje, pantalla de celular, etc.)
+
+REGLAS ESPECÍFICAS para órdenes médicas — si el tipo es orden_medica, verifica:
+- Si la orden menciona "accidente de tránsito", "SOAT", "ARL" o "accidente laboral" → legible: false, problema: "No atendemos accidentes de tránsito (SOAT) ni accidentes laborales (ARL). Solo enfermedad general."
+- Si la orden parece estar vencida (fecha mayor a 30 días) → agregar a alertas: "La orden puede estar vencida. El asesor verificará la vigencia."
+- Si no tiene firma médica visible → agregar a alertas: "No se detecta firma médica. El asesor verificará."
+
+Para cédulas: verificar que el frente sea legible con número y nombre visibles.`;
 
 // ── Descargar media de Meta ───────────────────────────────────
 
