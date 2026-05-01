@@ -530,7 +530,7 @@ async function menuPrincipal(to) {
     buttons: [
       { id: "menu_cita",     title: "📅 Agendar cita"        },
       { id: "menu_miscitas", title: "📋 Mis citas"            },
-      { id: "menu_asesor",   title: "👨‍💼 Hablar con asesor" },
+      { id: "menu_asesor",   title: "👨‍💼 Con asesor" },
     ],
   });
   // Mensaje 2: opciones secundarias en lista
@@ -1105,7 +1105,7 @@ async function handleBot(from, text, buttonId, mediaId) {
           `¿Tu orden cumple estas condiciones?`,
         buttons: [
           { id: "salud_total_si", title: "✅ Sí, cumple"          },
-          { id: "salud_total_no", title: "❌ No / No estoy seguro" },
+          { id: "salud_total_no", title: "❌ No estoy seguro" },
         ],
       });
       return;
@@ -1165,7 +1165,7 @@ async function handleBot(from, text, buttonId, mediaId) {
         body: "¿La orden está dirigida a Gestar Salud y eres mayor de edad?",
         buttons: [
           { id: "salud_total_si", title: "✅ Sí, cumple"          },
-          { id: "salud_total_no", title: "❌ No / No estoy seguro" },
+          { id: "salud_total_no", title: "❌ No estoy seguro" },
         ],
       });
     }
