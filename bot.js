@@ -490,18 +490,56 @@ function toYMD(date) {
    SECCIÓN 5 · MENÚS
    ============================================================ */
 
+// Mensaje post-confirmación/rechazo: solo menú principal
+async function enviarMenuPost(to) {
+  // Necesita importar sendButtons y guardarMensaje desde el contexto del bot
+  // Se llama también desde solicitudes.service, así que hace la llamada HTTP
+  try {
+    const axios = require("axios");
+    const token = await getBotToken();
+    // Enviar via Meta directamente
+    const WA_URL_LOCAL = `${require("./src/config/env").meta.baseUrl()}/${require("./src/config/env").meta.phoneId}/messages`;
+    const body = "¿Deseas hacer algo más?";
+    await axios.post(WA_URL_LOCAL,
+      {
+        messaging_product: "whatsapp", to, type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: body },
+          action: { buttons: [{ type: "reply", reply: { id: "menu_principal", title: "🏠 Menú principal" } }] },
+        },
+      },
+      { headers: { Authorization: `Bearer ${require("./src/config/env").meta.token}`, "Content-Type": "application/json" } }
+    );
+    await axios.post(
+      `${API_BASE}/api/chat/bot-message`,
+      { phone: to, texto: `${body}\n› 🏠 Menú principal` },
+      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, timeout: 3000 }
+    ).catch(() => {});
+  } catch(e) {
+    console.error("❌ enviarMenuPost:", e.message);
+  }
+}
+
 async function menuPrincipal(to) {
+  // Mensaje 1: 3 botones principales
+  await sendButtons(to, {
+    header:  "🏥 Ser Funcional I.P.S",
+    body:    "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
+    footer:  "Unidad Integral I.P.S S.A.S",
+    buttons: [
+      { id: "menu_cita",     title: "📅 Agendar cita"        },
+      { id: "menu_miscitas", title: "📋 Mis citas"            },
+      { id: "menu_asesor",   title: "👨‍💼 Hablar con asesor" },
+    ],
+  });
+  // Mensaje 2: opciones secundarias en lista
   await sendList(to, {
-    header:      "🏥 Ser Funcional I.P.S",
-    body:        "¡Bienvenido! ¿En qué podemos ayudarte hoy?",
-    footer:      "Unidad Integral I.P.S S.A.S",
-    buttonLabel: "Ver opciones",
-    sections: [{ title: "¿Qué necesitas?", rows: [
-      { id: "menu_cita",     title: "📅 Agendar cita",        description: "Solicita tu cita de terapia"     },
-      { id: "menu_miscitas", title: "📋 Mis citas",           description: "Ver o cancelar tus citas"        },
-      { id: "menu_horarios", title: "🕐 Horarios",            description: "Horarios de atención por sede"   },
-      { id: "menu_sedes",    title: "📍 Sedes",               description: "Información de nuestras sedes"   },
-      { id: "menu_asesor",   title: "👨‍💼 Hablar con asesor", description: "Conectar con un asesor humano"   },
+    body:        "Ver más opciones:",
+    buttonLabel: "Ver más",
+    sections: [{ title: "Información", rows: [
+      { id: "menu_horarios", title: "🕐 Horarios", description: "Horarios de atención por sede"  },
+      { id: "menu_sedes",    title: "📍 Sedes",    description: "Información de nuestras sedes" },
     ]}],
   });
 }
