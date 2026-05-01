@@ -1095,21 +1095,19 @@ async function handleBot(from, text, buttonId, mediaId) {
 
     // ── Caso especial: Salud Total — solo adultos con orden a Gestar ──
     if (payload === "eps_salud_total") {
-      await sendText(from,
-        `⚠️ *Importante — Salud Total*\n\n` +
-        `Atendemos pacientes de Salud Total *únicamente* si:\n\n` +
-        `✅ Es mayor de edad (18 años o más)\n` +
-        `✅ La orden médica está *dirigida a Gestar Salud*\n\n` +
-        `¿Tu orden cumple estas condiciones?`
-      );
+      await saveSession(from, { paso: "cita_eps_salud_total", datos: { ...sesion.datos, eps: epsNombre } });
       await sendButtons(from, {
-        body: "¿La orden está dirigida a Gestar Salud?",
+        header: "⚠️ Importante — Salud Total",
+        body:
+          `Atendemos Salud Total *únicamente* si:\n\n` +
+          `✅ Eres mayor de edad (18 años o más)\n` +
+          `✅ La orden médica está *dirigida a Gestar Salud*\n\n` +
+          `¿Tu orden cumple estas condiciones?`,
         buttons: [
-          { id: "salud_total_si", title: "✅ Sí, cumple"       },
+          { id: "salud_total_si", title: "✅ Sí, cumple"          },
           { id: "salud_total_no", title: "❌ No / No estoy seguro" },
         ],
       });
-      await saveSession(from, { paso: "cita_eps_salud_total", datos: { ...sesion.datos, eps: epsNombre } });
       return;
     }
 
