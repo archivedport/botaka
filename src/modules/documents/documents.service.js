@@ -43,44 +43,93 @@ No incluyas texto fuera del JSON.`;
 // extracción completa. Evita pasar imágenes borrosas o inválidas
 // al pipeline de IA y ahorra tokens y tiempo.
 
-const QUALITY_PROMPT = `Analiza esta imagen de un documento colombiano para la IPS de rehabilitación funcional "Ser Funcional".
-
-Determina si es legible Y válido. Responde ÚNICAMENTE con JSON válido, sin bloques de código:
-{
-  "legible": true o false,
-  "tipo": "cedula | orden_medica | historia_clinica | carnet_eps | foto_personal | no_documento | otro",
-  "subtipo": null,
-  "problema": "descripción breve en español del problema, o null si está OK",
-  "alertas": []
-}
-
+// ── Reglas base de legibilidad (comunes a todos los pasos) ──────
+const REGLAS_BASE = `
 REGLAS DE LEGIBILIDAD — considera NO legible si:
 - Está borrosa, desenfocada o movida
 - Muy oscura, sobreexpuesta o con reflejo
 - El documento está cortado (faltan bordes importantes)
 - Ángulo mayor a 30° (muy inclinada)
 - Resolución insuficiente para leer texto
-- No es un documento (foto de persona, paisaje, pantalla de celular, etc.)
-- No es un documento colombiano válido
+- No es ningún documento (foto de persona, paisaje, pantalla de celular, etc.)`;
 
-REGLAS ESPECÍFICAS para CÉDULAS colombianas:
-Existen dos tipos de cédula en Colombia:
-  A) Cédula MODERNA (azul/blanca, laminada, con chip): tiene todos los datos al frente. subtipo: "cedula_moderna"
-  B) Cédula ANTIGUA (amarilla/dorada, plastificada): 
-     - Frente: apellidos, nombres, número, firma. subtipo: "cedula_antigua_frente"
-     - Reverso: huella dactilar, fecha/lugar de nacimiento, fecha/lugar de expedición. subtipo: "cedula_antigua_reverso"
+// ── Reglas de cédula colombiana ──────────────────────────────
+const REGLAS_CEDULA = `
+TIPOS DE CÉDULA COLOMBIANA:
+  A) Cédula MODERNA (azul/blanca, laminada, con chip o sin chip reciente): subtipo "cedula_moderna"
+  B) Cédula ANTIGUA (amarilla/dorada, plastificada):
+     - Frente: apellidos, nombres, número, firma → subtipo "cedula_antigua_frente"
+     - Reverso: huella dactilar, fecha/lugar nacimiento, fecha/lugar expedición → subtipo "cedula_antigua_reverso"
+- Si es documento de otro país → legible: false, problema: "Solo aceptamos cédula de ciudadanía colombiana."
+- Si no dice "República de Colombia" → legible: false, problema: "Solo aceptamos cédula de ciudadanía colombiana."`;
 
-Para determinar el subtipo:
-- Si ves fondo amarillo/dorado con texto "REPÚBLICA DE COLOMBIA / CÉDULA DE CIUDADANÍA" y huella dactilar → cédula antigua REVERSO
-- Si ves fondo amarillo/dorado con nombre, apellidos y firma → cédula antigua FRENTE  
-- Si ves diseño moderno azul/blanco con foto y código de barras → cédula moderna
-- Verifica siempre que sea una cédula COLOMBIANA (debe decir "República de Colombia")
-- Si es cédula de otro país → legible: false, problema: "Solo aceptamos cédula de ciudadanía colombiana."
+/**
+ * Genera el prompt de calidad según el paso del bot.
+ * Esto le dice a Claude exactamente qué documento se espera
+ * y qué debe rechazar en cada momento del flujo.
+ */
+function getQualityPrompt(paso) {
+  const base = `Analiza esta imagen para la IPS "Ser Funcional" (rehabilitación funcional).
+Responde ÚNICAMENTE con JSON válido, sin bloques de código:
+{
+  "legible": true o false,
+  "tipo": "cedula | orden_medica | historia_clinica | carnet_eps | foto_personal | no_documento | otro",
+  "subtipo": null,
+  "problema": "descripción breve en español o null si está OK",
+  "alertas": []
+}
+${REGLAS_BASE}`;
 
-REGLAS ESPECÍFICAS para órdenes médicas:
+  switch (paso) {
+    case "cita_doc_cedula":
+      return base + `
+
+SE ESPERA: Cédula de ciudadanía (CC) o Tarjeta de Identidad (TI) COLOMBIANA — frente.
+${REGLAS_CEDULA}
+Si la imagen es cualquier otra cosa (orden médica, autorización EPS, historial, carnet, foto personal) →
+  legible: false, problema: "Se esperaba la cédula o tarjeta de identidad. Por favor envía el documento de identidad colombiano."`;
+
+    case "cita_doc_cedula_reverso":
+      return base + `
+
+SE ESPERA: Reverso de cédula ANTIGUA colombiana (huella dactilar, fecha nacimiento, lugar expedición).
+${REGLAS_CEDULA}
+- Si detectas el FRENTE de la cédula (nombre, apellidos, firma) → legible: false, problema: "Eso es el frente de la cédula. Por favor envía el REVERSO — la parte con la huella dactilar."
+- Si es cualquier otro documento (orden médica, autorización, historial) → legible: false, problema: "Se esperaba el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."`;
+
+    case "cita_doc_autorizacion":
+      return base + `
+
+SE ESPERA: Autorización o remisión emitida por la EPS para la atención en la IPS.
+Puede ser: papel con membrete de la EPS, código de autorización, orden de servicio, remisión.
+- Si es una cédula → legible: false, problema: "Eso es una cédula, no la autorización. Por favor envía el documento de autorización que te dio tu EPS."
+- Si es una orden médica (firmada por médico, con diagnóstico) → legible: false, problema: "Eso parece una orden médica, no la autorización EPS. Por favor envía la autorización que te entregó tu EPS."
+- Si es historial clínico → legible: false, problema: "Eso es una historia clínica, no la autorización. Por favor envía la autorización de tu EPS."
+- Si es foto personal o no es documento → legible: false, problema: "No es un documento válido. Por favor envía la autorización de tu EPS."`;
+
+    case "cita_doc_historial":
+      return base + `
+
+SE ESPERA: Historia clínica, evolución médica o cualquier documento clínico del paciente.
+- Si es una cédula → legible: false, problema: "Eso es una cédula, no una historia clínica. Por favor envía tu historia clínica o escribe 'omitir' si no la tienes."
+- Si es una autorización EPS → legible: false, problema: "Eso es una autorización EPS, no la historia clínica. Por favor envía tu historia clínica o escribe 'omitir'."
+- Si es foto personal o no es documento → legible: false, problema: "No es un documento clínico válido. Por favor envía tu historia clínica o escribe 'omitir'."
+- Ser más permisivo aquí: cualquier documento médico (receta, examen, evolución) es aceptable.`;
+
+    default:
+      // Prompt genérico para uso automático (modo MANUAL, etc.)
+      return base + `
+
+Verifica que sea un documento colombiano válido (cédula, orden médica, autorización EPS, historia clínica).
+REGLAS para órdenes médicas:
 - Si menciona "accidente de tránsito", "SOAT", "ARL" o "accidente laboral" → legible: false, problema: "No atendemos accidentes de tránsito (SOAT) ni accidentes laborales (ARL). Solo enfermedad general."
-- Si parece estar vencida (fecha mayor a 30 días) → alertas: ["La orden puede estar vencida. El asesor verificará."]
+- Si parece vencida (fecha mayor a 30 días) → alertas: ["La orden puede estar vencida. El asesor verificará."]
 - Si no tiene firma médica visible → alertas: ["No se detecta firma médica. El asesor verificará."]`;
+  }
+}
+
+// Alias para compatibilidad con código que use QUALITY_PROMPT directamente
+const QUALITY_PROMPT = getQualityPrompt("default");
 
 // ── Descargar media de Meta ───────────────────────────────────
 
@@ -175,8 +224,9 @@ function parsearRespuesta(texto) {
  * @param {string} mimeType — tipo MIME (image/jpeg, etc.)
  * @returns {{ legible: boolean, tipo: string, problema: string|null }}
  */
-async function verificarCalidadDocumento(base64, mimeType) {
+async function verificarCalidadDocumento(base64, mimeType, paso = "default") {
   try {
+    const promptParaPaso = getQualityPrompt(paso);
     const res = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
@@ -189,7 +239,7 @@ async function verificarCalidadDocumento(base64, mimeType) {
               type:   "image",
               source: { type: "base64", media_type: mimeType, data: base64 },
             },
-            { type: "text", text: QUALITY_PROMPT },
+            { type: "text", text: promptParaPaso },
           ],
         }],
       },
@@ -226,7 +276,7 @@ async function verificarCalidadDocumento(base64, mimeType) {
  * Nueva lógica (v2): Solo verificar calidad — NO extraer datos.
  * El asesor ve la imagen original en solicitudes.html.
  */
-async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinaryUrl, pacienteId, asesorId }) {
+async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinaryUrl, pacienteId, asesorId, paso }) {
   // 1. Descargar si no viene pre-descargado
   let base64 = b64, mimeType = mt;
   if (!base64) {
@@ -238,7 +288,7 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
   console.log(`📄 procesarDocumento: base64=${!!base64} mimeType=${mimeType} cloudinary=${!!cloudinaryUrl}`);
 
   // 2. Verificar calidad con Claude (prompt ligero)
-  const calidad = await verificarCalidadDocumento(base64, mimeType);
+  const calidad = await verificarCalidadDocumento(base64, mimeType, paso || "default");
 
   if (!calidad.legible) {
     return {
