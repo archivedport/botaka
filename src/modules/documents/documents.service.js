@@ -92,10 +92,17 @@ Si la imagen es cualquier otra cosa (orden médica, autorización EPS, historial
     case "cita_doc_cedula_reverso":
       return base + `
 
-SE ESPERA: Reverso de cédula ANTIGUA colombiana (huella dactilar, fecha nacimiento, lugar expedición).
-${REGLAS_CEDULA}
-- Si detectas el FRENTE de la cédula (nombre, apellidos, firma) → legible: false, problema: "Eso es el frente de la cédula. Por favor envía el REVERSO — la parte con la huella dactilar."
-- Si es cualquier otro documento (orden médica, autorización, historial) → legible: false, problema: "Se esperaba el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."`;
+SE ESPERA: ÚNICAMENTE el reverso de la cédula ANTIGUA colombiana (la parte amarilla/dorada con huella dactilar, fecha de nacimiento y lugar de expedición).
+
+RECHAZA ABSOLUTAMENTE TODO lo que no sea ese reverso específico:
+- Si es cédula MODERNA (azul/blanca con foto y chip) → legible: false, problema: "Eso es una cédula moderna, no el reverso que necesitamos. Por favor envía el REVERSO de tu cédula amarilla/dorada — la parte con la huella dactilar."
+- Si es el FRENTE de la cédula antigua (apellidos, nombres, número, firma) → legible: false, problema: "Eso es el frente de la cédula. Por favor envía el REVERSO — la parte con la huella dactilar."
+- Si es tarjeta de identidad → legible: false, problema: "Se esperaba el reverso de la cédula amarilla. Por favor envía la parte trasera con la huella dactilar."
+- Si es orden médica, autorización, historial u otro documento → legible: false, problema: "Se esperaba el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."
+- Si es foto personal o no es documento → legible: false, problema: "No es el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."
+
+Solo acepta si claramente ves: fondo amarillo/dorado, huella dactilar grande, fecha de nacimiento, lugar de expedición.
+En caso de duda → legible: false.`;
 
     case "cita_doc_autorizacion":
       return base + `
