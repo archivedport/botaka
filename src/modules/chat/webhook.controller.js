@@ -127,7 +127,8 @@ async function handle(req, res) {
     emitirMensajePaciente(from, texto || `[${tipo}]`, timestamp);
 
     if (status === "MANUAL") {
-      // Si llega una imagen en modo MANUAL: guardar referencia y procesar con IA
+      // En modo MANUAL el asesor tiene el control — procesar imagen con IA
+      // para que aparezca en el panel con los datos extraídos
       if (mediaId) {
         procesarDocumentoAutomatico(from, mediaId).catch(err =>
           console.error("Error auto-procesando documento:", err.message)
@@ -213,11 +214,12 @@ async function handle(req, res) {
       await _handleBot(from, texto, buttonId, mediaId);
     }
 
-    // Solo procesar automáticamente si el bot NO está en un paso de documentos
-    // (ej: paciente envía foto fuera del flujo → llega al panel del asesor)
-    if (mediaId && !botHandlesMedia) {
+    // Solo procesar automáticamente si el asesor tiene control MANUAL del chat
+    // Evita gastar tokens de IA con imágenes enviadas al azar por el paciente
+    // cuando el bot está activo y no está esperando un documento
+    if (mediaId && !botHandlesMedia && status === "MANUAL") {
       procesarDocumentoAutomatico(from, mediaId).catch(err =>
-        console.error("Error auto-procesando documento (bot):", err.message)
+        console.error("Error auto-procesando documento (manual):", err.message)
       );
     }
   } catch (err) {
