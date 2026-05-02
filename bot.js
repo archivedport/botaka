@@ -266,7 +266,7 @@ async function cancelarCitaAPI(citaId) {
  * Incluye verificación de calidad IA automática.
  * Devuelve { legible, logId, datos, confianza } o { legible: false, problema }
  */
-async function procesarDocAPI(phone, mediaId, paso = "default") {
+async function procesarDocAPI(phone, mediaId) {
   const paciente = await obtenerPaciente(phone);
 
   // Recuperar media pre-descargado (incluye base64 + cloudinaryUrl)
@@ -288,7 +288,7 @@ async function procesarDocAPI(phone, mediaId, paso = "default") {
 
   const { data } = await axios.post(
     `${API_BASE}/api/process-document`,
-    { mediaId, pacienteId: paciente?.id || null, paso, ...bodyExtra },
+    { mediaId, pacienteId: paciente?.id || null, ...bodyExtra },
     { headers: await apiHeaders(), timeout: 65000 }
   );
   return data;
@@ -1195,7 +1195,7 @@ async function handleBot(from, text, buttonId, mediaId) {
   }
 
   // ── Paso 1 de documentos: Cédula / Tarjeta de Identidad ─────
-  if (sesion.paso === "cita_doc_cedula_MARKER") {
+  if (sesion.paso === "cita_doc_cedula") {
     if (!mediaId) {
       await sendText(from,
         `📷 Por favor envía una foto de tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI).\n\n` +
@@ -1207,7 +1207,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Verificando tu documento de identidad... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_cedula");
+      const resultado = await procesarDocAPI(from, mediaId);
 
       if (resultado?.legible === false) {
         await sendText(from,
@@ -1300,7 +1300,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Verificando reverso de la cédula... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_cedula_reverso");
+      const resultado = await procesarDocAPI(from, mediaId);
 
       if (resultado?.legible === false) {
         await sendText(from,
@@ -1361,7 +1361,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Procesando autorización... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_autorizacion");
+      const resultado = await procesarDocAPI(from, mediaId);
 
       if (resultado.legible === false) {
         await sendText(from,
@@ -1416,7 +1416,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     if (mediaId) {
       await sendText(from, "🔍 Procesando historia clínica... ⏳");
       try {
-        const resultado = await procesarDocAPI(from, mediaId, "cita_doc_historial");
+        const resultado = await procesarDocAPI(from, mediaId);
         if (resultado.legible === false) {
           await sendText(from,
             `📷 No pudimos leer la historia clínica.\n\n` +
@@ -1689,6 +1689,15 @@ async function handleBot(from, text, buttonId, mediaId) {
   }
 
   // ── Fallback global ────────────────────────────────────────
+  // Si llegó solo una imagen (sin texto ni botón) y no es un paso de documentos,
+  // ignorar silenciosamente — no resetear la sesión.
+  // Esto evita que fotos enviadas por error interrumpan el flujo activo.
+  const DOC_STEPS_BOT = ["cita_doc_cedula", "cita_doc_cedula_reverso", "cita_doc_autorizacion", "cita_doc_historial"];
+  if (mediaId && !text && !buttonId && !DOC_STEPS_BOT.includes(sesion.paso)) {
+    console.log(`⚠️ Imagen ignorada en paso "${sesion.paso}" para ${from}`);
+    return;
+  }
+
   await clearSession(from);
   await saveSession(from, { paso: "menu", datos: {} });
   await sendText(from, "😅 No entendí ese mensaje. Aquí tienes el menú principal:");
