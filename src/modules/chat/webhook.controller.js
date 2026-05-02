@@ -145,7 +145,7 @@ async function handle(req, res) {
 
     // Verificar si el bot está en un paso de carga de documentos
     // En ese caso, el bot manejará el media directamente
-    const DOC_STEPS = ["cita_doc_cedula", "cita_doc_autorizacion", "cita_doc_historial"];
+    const DOC_STEPS = ["cita_doc_cedula", "cita_doc_cedula_reverso", "cita_doc_autorizacion", "cita_doc_historial"];
     const sesionBot = await getSession(from).catch(() => ({ paso: "inicio", datos: {} }));
     const botHandlesMedia = mediaId && DOC_STEPS.includes(sesionBot.paso);
 
