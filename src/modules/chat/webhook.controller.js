@@ -127,11 +127,11 @@ async function handle(req, res) {
     emitirMensajePaciente(from, texto || `[${tipo}]`, timestamp);
 
     if (status === "MANUAL") {
-      // En modo MANUAL el asesor tiene el control — procesar imagen con IA
-      // para que aparezca en el panel con los datos extraídos
+      // En MANUAL: solo guardar imagen con URL permanente para el panel
+      // NO usar IA ni responder al paciente — el asesor está a cargo
       if (mediaId) {
-        procesarDocumentoAutomatico(from, mediaId).catch(err =>
-          console.error("Error auto-procesando documento:", err.message)
+        guardarImagenManual(from, mediaId).catch(err =>
+          console.error("Error guardando imagen manual:", err.message)
         );
       }
       return;
@@ -214,14 +214,8 @@ async function handle(req, res) {
       await _handleBot(from, texto, buttonId, mediaId);
     }
 
-    // Solo procesar automáticamente si el asesor tiene control MANUAL del chat
-    // Evita gastar tokens de IA con imágenes enviadas al azar por el paciente
-    // cuando el bot está activo y no está esperando un documento
-    if (mediaId && !botHandlesMedia && status === "MANUAL") {
-      procesarDocumentoAutomatico(from, mediaId).catch(err =>
-        console.error("Error auto-procesando documento (manual):", err.message)
-      );
-    }
+    // Nota: imágenes en modo MANUAL las maneja guardarImagenManual (arriba).
+    // Aquí solo llega el flujo BOT con botHandlesMedia ya gestionado.
   } catch (err) {
     console.error("Error en webhook handler:", err.message);
   }
@@ -240,6 +234,60 @@ async function sendWAFeedback(to, body) {
   } catch (e) {
     console.error("⚠️ WA quality feedback:", e.response?.data || e.message);
   }
+}
+
+// ── Guardar imagen en modo MANUAL ────────────────────────────
+//  Solo descarga + Cloudinary + mensaje en BD.
+//  Sin IA, sin quality check, sin respuesta al paciente.
+async function guardarImagenManual(phone, mediaId) {
+  const { descargarMediaMeta } = require("../documents/documents.service");
+  const { subirImagen }        = require("../../config/cloudinary");
+
+  let base64, mimeType;
+  try {
+    ({ base64, mimeType } = await descargarMediaMeta(mediaId));
+  } catch (err) {
+    console.error("❌ Error descargando imagen manual:", err.message);
+    return;
+  }
+
+  let cloudinaryUrl = null;
+  try {
+    const result = await subirImagen(base64, mimeType, {
+      folder:   "documentos/manual",
+      publicId: `${phone}_${mediaId}`,
+    });
+    cloudinaryUrl = result.url;
+    console.log(`☁️  Imagen manual OK: ${cloudinaryUrl}`);
+  } catch (e) {
+    console.error("⚠️ Cloudinary manual:", e.message);
+  }
+
+  if (!cloudinaryUrl) return;
+
+  // Guardar en BD y emitir al panel
+  try {
+    const paciente = await prisma.paciente.findUnique({ where: { phone } });
+    if (paciente) {
+      await prisma.mensaje.create({
+        data: {
+          pacienteId: paciente.id,
+          de:         "PACIENTE",
+          texto:      "[Imagen enviada]",
+          mediaUrl:   cloudinaryUrl,
+        },
+      });
+      const { getIO } = require("../../socket/socket");
+      const payload = {
+        phone, from: "PACIENTE",
+        mensaje: "[Imagen enviada]",
+        mediaUrl: cloudinaryUrl,
+        timestamp: new Date().toISOString(),
+      };
+      getIO().to(`chat:${phone}`).emit("chat:new_message", payload);
+      getIO().to("asesores").emit("chat:list_update", payload);
+    }
+  } catch(e) { console.warn("⚠️ guardar imagen manual:", e.message); }
 }
 
 // ── Procesamiento automático de documentos ───────────────────
@@ -303,51 +351,13 @@ async function procesarDocumentoAutomatico(phone, mediaId) {
     return; // No procesar más — esperar que reenvíe
   }
 
-  // ── PASO 3: subir a Cloudinary para URL permanente ──────────
-  let cloudinaryUrl = null;
-  try {
-    const { subirImagen } = require("../../config/cloudinary");
-    const result = await subirImagen(base64, mimeType, {
-      folder:   "documentos/manual",
-      publicId: `${phone}_${mediaId}`,
-    });
-    cloudinaryUrl = result.url;
-    console.log(`☁️  Cloudinary manual OK: ${cloudinaryUrl}`);
-  } catch (cloudErr) {
-    console.error("⚠️ Cloudinary upload (manual):", cloudErr.message);
-  }
-
-  // ── PASO 4: guardar mensaje con imagen en BD y emitir al panel ──
-  if (cloudinaryUrl && paciente) {
-    try {
-      await prisma.mensaje.create({
-        data: {
-          pacienteId: paciente.id,
-          de:         "PACIENTE",
-          texto:      "[Imagen enviada]",
-          mediaUrl:   cloudinaryUrl,
-        },
-      });
-      const { getIO: _getIO } = require("../../socket/socket");
-      const imgPayload = {
-        phone, from: "PACIENTE",
-        mensaje: "[Imagen enviada]",
-        mediaUrl: cloudinaryUrl,
-        timestamp: new Date().toISOString(),
-      };
-      _getIO().to(`chat:${phone}`).emit("chat:new_message", imgPayload);
-      _getIO().to("asesores").emit("chat:list_update", imgPayload);
-    } catch(e) { console.warn("⚠️ guardar msg imagen manual:", e.message); }
-  }
-
-  // ── PASO 5: extracción completa ───────────────────────────
+  // ── PASO 3: extracción completa (reutiliza base64 ya descargado) ──
   let resultado;
   try {
     resultado = await procesarDocumento({
       mediaId,
       base64,
       mimeType,
-      cloudinaryUrl,
       pacienteId: paciente?.id || null,
       asesorId:   null,
     });
@@ -356,7 +366,7 @@ async function procesarDocumentoAutomatico(phone, mediaId) {
     return;
   }
 
-  // ── PASO 6: notificar a asesores ─────────────────────────
+  // ── PASO 4: notificar a asesores ─────────────────────────
   try {
     const io = getIO();
     io.to("asesores").emit("documento:procesado", {
