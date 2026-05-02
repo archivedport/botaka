@@ -1198,8 +1198,8 @@ async function handleBot(from, text, buttonId, mediaId) {
   if (sesion.paso === "cita_doc_cedula") {
     if (!mediaId) {
       await sendText(from,
-        `📷 Por favor envía una foto de tu *cédula* (CC) o *tarjeta de identidad* (TI).\n` +
-        `_Sin borrosidad, buena luz, todo el documento visible._`
+        `📷 Por favor envía una foto de tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI).\n\n` +
+        `_Debe ser colombiana. Solo el frente. Buena luz, sin borrosidad, todo visible._`
       );
       return;
     }
@@ -1209,7 +1209,6 @@ async function handleBot(from, text, buttonId, mediaId) {
     try {
       const resultado = await procesarDocAPI(from, mediaId);
 
-      // legible:false solo si el backend lo devuelve explícitamente
       if (resultado?.legible === false) {
         await sendText(from,
           `📷 No pudimos leer tu documento.\n\n` +
@@ -1220,12 +1219,11 @@ async function handleBot(from, text, buttonId, mediaId) {
         return;
       }
 
-      // Extraer datos de la cédula
-      const datos   = resultado.datos || {};
-      const nombre  = datos.nombre   || null;
-      const docNum  = datos.cedula   || null;
+      const subtipo = resultado.subtipo || null;
+      const nombre  = resultado.datos?.nombre || null;
+      const docNum  = resultado.datos?.cedula || null;
 
-      // Actualizar perfil del paciente con los datos extraídos
+      // Actualizar perfil del paciente
       const paciente = await obtenerPaciente(from);
       if (paciente) {
         const update = {};
@@ -1234,6 +1232,28 @@ async function handleBot(from, text, buttonId, mediaId) {
         await actualizarPacienteAPI(paciente.id, update);
       }
 
+      // ── Cédula antigua: pedir el reverso ─────────────────────
+      if (subtipo === "cedula_antigua_frente") {
+        await sendText(from,
+          `✅ *Frente de cédula recibido.*\n\n` +
+          `📷 Ahora envía una foto del *reverso* de tu cédula\n` +
+          `_(La parte con la huella dactilar y lugar de nacimiento)_\n\n` +
+          `_Buena luz, todo visible._`
+        );
+        await saveSession(from, {
+          paso:  "cita_doc_cedula_reverso",
+          datos: {
+            ...sesion.datos,
+            nombre:      nombre || sesion.datos.nombre || "Paciente",
+            documento:   docNum || sesion.datos.documento || "",
+            logIdCedula: resultado.logId,
+            urlCedula:   resultado.cloudinaryUrl || null,
+          },
+        });
+        return;
+      }
+
+      // ── Cédula moderna o TI: continuar directamente ───────────
       const msgConf = nombre && docNum
         ? `✅ *Identidad verificada*\n\n👤 *${nombre}*\n🪪 ${docNum}`
         : `✅ Documento de identidad recibido.`;
@@ -1248,10 +1268,10 @@ async function handleBot(from, text, buttonId, mediaId) {
         paso:  "cita_doc_autorizacion",
         datos: {
           ...sesion.datos,
-          nombre:           nombre || sesion.datos.nombre || "Paciente",
-          documento:        docNum || sesion.datos.documento || "",
-          logIdCedula:      resultado.logId,
-          urlCedula:        resultado.cloudinaryUrl || null,
+          nombre:      nombre || sesion.datos.nombre || "Paciente",
+          documento:   docNum || sesion.datos.documento || "",
+          logIdCedula: resultado.logId,
+          urlCedula:   resultado.cloudinaryUrl || null,
         },
       });
 
@@ -1260,8 +1280,69 @@ async function handleBot(from, text, buttonId, mediaId) {
       console.error("❌ procesarDocAPI cédula:", err.message);
       await sendText(from,
         esTimeout
-          ? "⏱️ El servidor tardó demasiado procesando la imagen. Por favor envía la foto de nuevo:"
+          ? "⏱️ El servidor tardó demasiado. Por favor envía la foto de nuevo:"
           : "⚠️ Problema procesando el documento. Por favor vuelve a enviarlo:"
+      );
+    }
+    return;
+  }
+
+  // ── Reverso de cédula antigua ────────────────────────────────
+  if (sesion.paso === "cita_doc_cedula_reverso") {
+    if (!mediaId) {
+      await sendText(from,
+        `📷 Envía la foto del *reverso* de tu cédula\n` +
+        `_(La parte con la huella dactilar)_`
+      );
+      return;
+    }
+
+    await sendText(from, "🔍 Verificando reverso de la cédula... ⏳");
+
+    try {
+      const resultado = await procesarDocAPI(from, mediaId);
+
+      if (resultado?.legible === false) {
+        await sendText(from,
+          `📷 No pudimos leer el reverso.\n\n` +
+          `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
+          `Por favor vuelve a enviar la foto del reverso con buena iluminación.`
+        );
+        return;
+      }
+
+      // Verificar que sea el reverso correcto
+      const subtipo = resultado.subtipo || "";
+      if (subtipo === "cedula_antigua_frente" || subtipo === "cedula_moderna") {
+        await sendText(from,
+          `⚠️ Parece que enviaste el *frente* de nuevo.\n\n` +
+          `Por favor envía el *reverso* de tu cédula — la parte con la huella dactilar. 🖐️`
+        );
+        return;
+      }
+
+      await sendText(from,
+        `✅ *Cédula completa recibida.* \n\n` +
+        `Ahora envía la foto de tu *autorización EPS* 📄\n` +
+        `_(El documento que tu EPS te entrega para autorizar la cita)_`
+      );
+
+      await saveSession(from, {
+        paso:  "cita_doc_autorizacion",
+        datos: {
+          ...sesion.datos,
+          logIdCedulaReverso: resultado.logId,
+          urlCedulaReverso:   resultado.cloudinaryUrl || null,
+        },
+      });
+
+    } catch (err) {
+      const esTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
+      console.error("❌ procesarDocAPI cédula reverso:", err.message);
+      await sendText(from,
+        esTimeout
+          ? "⏱️ El servidor tardó demasiado. Por favor envía la foto de nuevo:"
+          : "⚠️ Problema procesando el reverso. Por favor vuelve a enviarlo:"
       );
     }
     return;
