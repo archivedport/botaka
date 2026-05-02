@@ -266,7 +266,7 @@ async function cancelarCitaAPI(citaId) {
  * Incluye verificación de calidad IA automática.
  * Devuelve { legible, logId, datos, confianza } o { legible: false, problema }
  */
-async function procesarDocAPI(phone, mediaId) {
+async function procesarDocAPI(phone, mediaId, paso = "default") {
   const paciente = await obtenerPaciente(phone);
 
   // Recuperar media pre-descargado (incluye base64 + cloudinaryUrl)
@@ -288,7 +288,7 @@ async function procesarDocAPI(phone, mediaId) {
 
   const { data } = await axios.post(
     `${API_BASE}/api/process-document`,
-    { mediaId, pacienteId: paciente?.id || null, ...bodyExtra },
+    { mediaId, pacienteId: paciente?.id || null, paso, ...bodyExtra },
     { headers: await apiHeaders(), timeout: 65000 }
   );
   return data;
@@ -1207,7 +1207,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Verificando tu documento de identidad... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId);
+      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_cedula");
 
       if (resultado?.legible === false) {
         await sendText(from,
@@ -1300,7 +1300,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Verificando reverso de la cédula... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId);
+      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_cedula_reverso");
 
       if (resultado?.legible === false) {
         await sendText(from,
@@ -1361,7 +1361,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     await sendText(from, "🔍 Procesando autorización... ⏳");
 
     try {
-      const resultado = await procesarDocAPI(from, mediaId);
+      const resultado = await procesarDocAPI(from, mediaId, "cita_doc_autorizacion");
 
       if (resultado.legible === false) {
         await sendText(from,
@@ -1416,7 +1416,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     if (mediaId) {
       await sendText(from, "🔍 Procesando historia clínica... ⏳");
       try {
-        const resultado = await procesarDocAPI(from, mediaId);
+        const resultado = await procesarDocAPI(from, mediaId, "cita_doc_historial");
         if (resultado.legible === false) {
           await sendText(from,
             `📷 No pudimos leer la historia clínica.\n\n` +
