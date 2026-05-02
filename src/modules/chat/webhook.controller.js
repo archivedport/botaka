@@ -127,7 +127,7 @@ async function handle(req, res) {
     emitirMensajePaciente(from, texto || `[${tipo}]`, timestamp);
 
     if (status === "MANUAL") {
-      // Si llega una imagen/documento en modo MANUAL, procesar con IA
+      // Si llega una imagen en modo MANUAL: guardar referencia y procesar con IA
       if (mediaId) {
         procesarDocumentoAutomatico(from, mediaId).catch(err =>
           console.error("Error auto-procesando documento:", err.message)
@@ -175,6 +175,34 @@ async function handle(req, res) {
 
         await saveMediaCache(mediaId, base64, mimeType, cloudinaryUrl);
         console.log(`📦 Media ${mediaId} cacheado para ${from}`);
+
+        // Actualizar el mensaje del paciente con la URL de la imagen
+        // para que sea visible en el chat del panel
+        if (cloudinaryUrl) {
+          try {
+            const paciente = await prisma.paciente.findUnique({ where: { phone: from } });
+            if (paciente) {
+              await prisma.mensaje.create({
+                data: {
+                  pacienteId: paciente.id,
+                  de:         "PACIENTE",
+                  texto:      "[Imagen enviada]",
+                  mediaUrl:   cloudinaryUrl,
+                },
+              });
+              // Emitir al panel para que dibuje la imagen en el chat
+              const { getIO: _getIO } = require("../../socket/socket");
+              const imgPayload = {
+                phone: from, from: "PACIENTE",
+                mensaje: "[Imagen enviada]",
+                mediaUrl: cloudinaryUrl,
+                timestamp: new Date().toISOString(),
+              };
+              _getIO().to(`chat:${from}`).emit("chat:new_message", imgPayload);
+              _getIO().to("asesores").emit("chat:list_update", imgPayload);
+            }
+          } catch(e) { console.warn("⚠️ guardar msg imagen:", e.message); }
+        }
       } catch (dlErr) {
         console.error("⚠️ Error pre-descargando media:", dlErr.message);
       }
