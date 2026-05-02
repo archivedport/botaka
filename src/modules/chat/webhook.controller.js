@@ -303,13 +303,51 @@ async function procesarDocumentoAutomatico(phone, mediaId) {
     return; // No procesar más — esperar que reenvíe
   }
 
-  // ── PASO 3: extracción completa (reutiliza base64 ya descargado) ──
+  // ── PASO 3: subir a Cloudinary para URL permanente ──────────
+  let cloudinaryUrl = null;
+  try {
+    const { subirImagen } = require("../../config/cloudinary");
+    const result = await subirImagen(base64, mimeType, {
+      folder:   "documentos/manual",
+      publicId: `${phone}_${mediaId}`,
+    });
+    cloudinaryUrl = result.url;
+    console.log(`☁️  Cloudinary manual OK: ${cloudinaryUrl}`);
+  } catch (cloudErr) {
+    console.error("⚠️ Cloudinary upload (manual):", cloudErr.message);
+  }
+
+  // ── PASO 4: guardar mensaje con imagen en BD y emitir al panel ──
+  if (cloudinaryUrl && paciente) {
+    try {
+      await prisma.mensaje.create({
+        data: {
+          pacienteId: paciente.id,
+          de:         "PACIENTE",
+          texto:      "[Imagen enviada]",
+          mediaUrl:   cloudinaryUrl,
+        },
+      });
+      const { getIO: _getIO } = require("../../socket/socket");
+      const imgPayload = {
+        phone, from: "PACIENTE",
+        mensaje: "[Imagen enviada]",
+        mediaUrl: cloudinaryUrl,
+        timestamp: new Date().toISOString(),
+      };
+      _getIO().to(`chat:${phone}`).emit("chat:new_message", imgPayload);
+      _getIO().to("asesores").emit("chat:list_update", imgPayload);
+    } catch(e) { console.warn("⚠️ guardar msg imagen manual:", e.message); }
+  }
+
+  // ── PASO 5: extracción completa ───────────────────────────
   let resultado;
   try {
     resultado = await procesarDocumento({
       mediaId,
       base64,
       mimeType,
+      cloudinaryUrl,
       pacienteId: paciente?.id || null,
       asesorId:   null,
     });
@@ -318,7 +356,7 @@ async function procesarDocumentoAutomatico(phone, mediaId) {
     return;
   }
 
-  // ── PASO 4: notificar a asesores ─────────────────────────
+  // ── PASO 6: notificar a asesores ─────────────────────────
   try {
     const io = getIO();
     io.to("asesores").emit("documento:procesado", {
