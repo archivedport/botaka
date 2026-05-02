@@ -276,6 +276,7 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
     logId:         log.id,
     cloudinaryUrl: cloudinaryUrl || null,
     tipoDocumento: tipoDoc,
+    subtipo:       calidad.subtipo || null,  // cedula_antigua_frente | cedula_moderna | etc.
   };
 }
 
