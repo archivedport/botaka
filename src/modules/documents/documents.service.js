@@ -43,12 +43,13 @@ No incluyas texto fuera del JSON.`;
 // extracción completa. Evita pasar imágenes borrosas o inválidas
 // al pipeline de IA y ahorra tokens y tiempo.
 
-const QUALITY_PROMPT = `Analiza esta imagen de un documento médico colombiano para la IPS de rehabilitación funcional "Ser Funcional".
+const QUALITY_PROMPT = `Analiza esta imagen de un documento colombiano para la IPS de rehabilitación funcional "Ser Funcional".
 
-Determina si es legible Y válido para agendamiento. Responde ÚNICAMENTE con JSON válido, sin bloques de código:
+Determina si es legible Y válido. Responde ÚNICAMENTE con JSON válido, sin bloques de código:
 {
   "legible": true o false,
   "tipo": "cedula | orden_medica | historia_clinica | carnet_eps | foto_personal | no_documento | otro",
+  "subtipo": null,
   "problema": "descripción breve en español del problema, o null si está OK",
   "alertas": []
 }
@@ -60,13 +61,26 @@ REGLAS DE LEGIBILIDAD — considera NO legible si:
 - Ángulo mayor a 30° (muy inclinada)
 - Resolución insuficiente para leer texto
 - No es un documento (foto de persona, paisaje, pantalla de celular, etc.)
+- No es un documento colombiano válido
 
-REGLAS ESPECÍFICAS para órdenes médicas — si el tipo es orden_medica, verifica:
-- Si la orden menciona "accidente de tránsito", "SOAT", "ARL" o "accidente laboral" → legible: false, problema: "No atendemos accidentes de tránsito (SOAT) ni accidentes laborales (ARL). Solo enfermedad general."
-- Si la orden parece estar vencida (fecha mayor a 30 días) → agregar a alertas: "La orden puede estar vencida. El asesor verificará la vigencia."
-- Si no tiene firma médica visible → agregar a alertas: "No se detecta firma médica. El asesor verificará."
+REGLAS ESPECÍFICAS para CÉDULAS colombianas:
+Existen dos tipos de cédula en Colombia:
+  A) Cédula MODERNA (azul/blanca, laminada, con chip): tiene todos los datos al frente. subtipo: "cedula_moderna"
+  B) Cédula ANTIGUA (amarilla/dorada, plastificada): 
+     - Frente: apellidos, nombres, número, firma. subtipo: "cedula_antigua_frente"
+     - Reverso: huella dactilar, fecha/lugar de nacimiento, fecha/lugar de expedición. subtipo: "cedula_antigua_reverso"
 
-Para cédulas: verificar que el frente sea legible con número y nombre visibles.`;
+Para determinar el subtipo:
+- Si ves fondo amarillo/dorado con texto "REPÚBLICA DE COLOMBIA / CÉDULA DE CIUDADANÍA" y huella dactilar → cédula antigua REVERSO
+- Si ves fondo amarillo/dorado con nombre, apellidos y firma → cédula antigua FRENTE  
+- Si ves diseño moderno azul/blanco con foto y código de barras → cédula moderna
+- Verifica siempre que sea una cédula COLOMBIANA (debe decir "República de Colombia")
+- Si es cédula de otro país → legible: false, problema: "Solo aceptamos cédula de ciudadanía colombiana."
+
+REGLAS ESPECÍFICAS para órdenes médicas:
+- Si menciona "accidente de tránsito", "SOAT", "ARL" o "accidente laboral" → legible: false, problema: "No atendemos accidentes de tránsito (SOAT) ni accidentes laborales (ARL). Solo enfermedad general."
+- Si parece estar vencida (fecha mayor a 30 días) → alertas: ["La orden puede estar vencida. El asesor verificará."]
+- Si no tiene firma médica visible → alertas: ["No se detecta firma médica. El asesor verificará."]`;
 
 // ── Descargar media de Meta ───────────────────────────────────
 
