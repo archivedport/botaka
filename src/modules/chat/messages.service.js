@@ -15,10 +15,11 @@ const prisma = require("../../config/database");
  * @param {string} opts.de         — 'PACIENTE' | 'BOT' | 'ASESOR'
  * @param {string} opts.texto      — contenido del mensaje
  * @param {string} [opts.asesorId] — solo si de === 'ASESOR'
+ * @param {string} [opts.mediaUrl] — URL de Cloudinary si tiene imagen
  */
-async function guardarMensaje({ phone, de, texto, asesorId = null }) {
+async function guardarMensaje({ phone, de, texto, asesorId = null, mediaUrl = null }) {
   try {
-    if (!texto?.trim()) return null;
+    if (!texto?.trim() && !mediaUrl) return null;
 
     const paciente = await prisma.paciente.findUnique({ where: { phone } });
     if (!paciente) return null;
@@ -27,8 +28,9 @@ async function guardarMensaje({ phone, de, texto, asesorId = null }) {
       data: {
         pacienteId: paciente.id,
         de,
-        texto:    texto.trim(),
+        texto:    (texto || "").trim(),
         asesorId: asesorId || null,
+        mediaUrl: mediaUrl || null,
       },
     });
   } catch (err) {
