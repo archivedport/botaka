@@ -27,6 +27,7 @@ async function processDocument(req, res) {
       cloudinaryUrl: req.body.cloudinaryUrl || null,
       pacienteId:    pacienteId || null,
       asesorId:      req.usuario.id,
+      paso:          req.body.paso          || "default",
     });
 
     await auditSvc.registrar({
