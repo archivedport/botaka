@@ -106,6 +106,7 @@ model Mensaje {
   de         String   // PACIENTE | BOT | ASESOR
   asesorId   String?  // Solo si de === ASESOR
   texto      String
+  mediaUrl   String?  // URL de Cloudinary si el mensaje tiene imagen
   createdAt  DateTime @default(now())
 
   paciente   Paciente @relation(fields: [pacienteId], references: [id])
