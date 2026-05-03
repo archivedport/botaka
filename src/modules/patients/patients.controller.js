@@ -60,8 +60,12 @@ async function getById(req, res) {
         },
         logsIA: {
           orderBy: { createdAt: "desc" },
-          take:    5,
-          select:  { id: true, tipoDocumento: true, confianza: true, createdAt: true, validadoEn: true },
+          take:    10,
+          select:  {
+            id: true, tipoDocumento: true, confianza: true,
+            createdAt: true, validadoEn: true,
+            resultadoRaw: true,  // contiene cloudinaryUrl
+          },
         },
       },
     });
