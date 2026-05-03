@@ -210,7 +210,8 @@ async function manejarRespuestaConfirmacion(phone, buttonId) {
   if (!cita) return false;
 
   if (esConfirmacion) {
-    await prisma.cita.update({ where: { id: cita.id }, data: { estado: "CONFIRMADA" } });
+    // No cambiar el estado — si estaba PENDIENTE sigue PENDIENTE (el asesor la aprueba)
+    // Si estaba CONFIRMADA ya fue aprobada por el asesor, no hace falta cambiar nada
     await enviarMensaje(phone, {
       type: "text",
       text: {
