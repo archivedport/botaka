@@ -85,8 +85,8 @@ async function enviarRecordatorio24h() {
         footer: { text: "Ser Funcional I.P.S" },
         action: {
           buttons: [
-            { type: "reply", reply: { id: "confirmar_asistencia_si", title: "✅ Sí, asistiré"    } },
-            { type: "reply", reply: { id: "confirmar_asistencia_no", title: "❌ No podré asistir" } },
+            { type: "reply", reply: { id: `confirmar_si_${cita.id}`, title: "✅ Sí, asistiré"    } },
+            { type: "reply", reply: { id: `confirmar_no_${cita.id}`, title: "❌ No podré asistir" } },
           ],
         },
       },
@@ -158,27 +158,53 @@ async function enviarRecordatorio2h() {
 //  buttonId === "confirmar_asistencia_si" o "confirmar_asistencia_no"
 
 async function manejarRespuestaConfirmacion(phone, buttonId) {
-  const esConfirmacion = buttonId === "confirmar_asistencia_si";
-  const esCancelacion  = buttonId === "confirmar_asistencia_no";
+  // Formato nuevo: "confirmar_si_{citaId}" o "confirmar_no_{citaId}"
+  // Formato viejo (compatibilidad): "confirmar_asistencia_si" / "confirmar_asistencia_no"
+  let esConfirmacion = false;
+  let esCancelacion  = false;
+  let citaId         = null;
 
-  if (!esConfirmacion && !esCancelacion) return false;
+  if (buttonId.startsWith("confirmar_si_")) {
+    esConfirmacion = true;
+    citaId = buttonId.replace("confirmar_si_", "");
+  } else if (buttonId.startsWith("confirmar_no_")) {
+    esCancelacion = true;
+    citaId = buttonId.replace("confirmar_no_", "");
+  } else if (buttonId === "confirmar_asistencia_si") {
+    esConfirmacion = true;
+  } else if (buttonId === "confirmar_asistencia_no") {
+    esCancelacion = true;
+  } else {
+    return false;
+  }
 
-  // Buscar cita próxima activa del paciente
-  const paciente = await prisma.paciente.findUnique({ where: { phone } });
-  if (!paciente) return false;
+  let cita;
 
-  const ahora = new Date();
-  const en36h = new Date(ahora.getTime() + 36 * 60 * 60 * 1000);
-
-  const cita = await prisma.cita.findFirst({
-    where: {
-      pacienteId: paciente.id,
-      estado:     { in: ["PENDIENTE", "CONFIRMADA"] },
-      fechaInicio: { gte: ahora, lte: en36h },
-    },
-    include: { sede: { select: { nombre: true } } },
-    orderBy: { fechaInicio: "asc" },
-  });
+  if (citaId) {
+    // Formato nuevo: buscar por ID exacto — no hay ambigüedad
+    cita = await prisma.cita.findUnique({
+      where:   { id: citaId },
+      include: { sede: { select: { nombre: true } } },
+    });
+    // Verificar que pertenece al paciente que respondió
+    const paciente = await prisma.paciente.findUnique({ where: { phone } });
+    if (!cita || cita.pacienteId !== paciente?.id) return false;
+  } else {
+    // Formato viejo (fallback): buscar la cita más próxima
+    const paciente = await prisma.paciente.findUnique({ where: { phone } });
+    if (!paciente) return false;
+    const ahora = new Date();
+    const en36h = new Date(ahora.getTime() + 36 * 60 * 60 * 1000);
+    cita = await prisma.cita.findFirst({
+      where: {
+        pacienteId:  paciente.id,
+        estado:      { in: ["PENDIENTE", "CONFIRMADA"] },
+        fechaInicio: { gte: ahora, lte: en36h },
+      },
+      include: { sede: { select: { nombre: true } } },
+      orderBy: { fechaInicio: "asc" },
+    });
+  }
 
   if (!cita) return false;
 
