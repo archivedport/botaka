@@ -63,6 +63,7 @@ router.patch( "/api/solicitudes/:id/denegar",  requireAuth, solCtrl.denegar);
 router.post("/api/process-document",          requireAuth, docCtrl.processDocument);
 router.post("/api/process-document/validate", requireAuth, docCtrl.validateDocument);
 router.get( "/api/process-document/logs",     requireAuth, docCtrl.getLogs);
+router.get( "/api/process-document/stats",    requireAuth, requireRol("ADMIN"), docCtrl.getStats);
 
 // ── Pacientes ─────────────────────────────────────────────────
 router.get(  "/api/patients",                requireAuth, patCtrl.list);
