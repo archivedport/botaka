@@ -17,6 +17,13 @@ const axios  = require("axios");
 const prisma = require("../../config/database");
 const { meta, gemini, anthropic } = require("../../config/env");
 
+// ── Precios Claude Haiku (para tracking de costos) ───────────
+const INPUT_PRICE_PER_TOKEN  = 0.80 / 1_000_000;   // $0.80 por millón
+const OUTPUT_PRICE_PER_TOKEN = 4.00 / 1_000_000;   // $4.00 por millón
+function calcCostUSD(inputTokens, outputTokens) {
+  return (inputTokens * INPUT_PRICE_PER_TOKEN) + (outputTokens * OUTPUT_PRICE_PER_TOKEN);
+}
+
 // ── Prompt de extracción ──────────────────────────────────────
 
 const EXTRACTION_PROMPT = `Analiza esta imagen de un documento médico colombiano para la IPS "Ser Funcional" (rehabilitación funcional).
@@ -272,12 +279,16 @@ async function extraerDatosCedula(base64, mimeType) {
       }
     );
     const texto = res.data?.content?.[0]?.text || "";
+    const usage = res.data?.usage || {};
     const datos = parsearRespuesta(texto);
     console.log(`📋 Cédula extraída: nombre=${datos.nombre} cedula=${datos.cedula}`);
-    return datos;
+    return {
+      ...datos,
+      _tokens: { input: usage.input_tokens || 0, output: usage.output_tokens || 0 },
+    };
   } catch (err) {
     console.warn("⚠️ extraerDatosCedula falló:", err.message);
-    return { nombre: null, cedula: null, confianza: 0 };
+    return { nombre: null, cedula: null, confianza: 0, _tokens: { input: 0, output: 0 } };
   }
 }
 
@@ -335,12 +346,17 @@ async function verificarCalidadDocumento(base64, mimeType, paso = "default") {
       }
     );
 
-    const texto = res.data?.content?.[0]?.text || "";
-    return parsearRespuesta(texto);
+    const texto  = res.data?.content?.[0]?.text || "";
+    const usage  = res.data?.usage || {};
+    const parsed = parsearRespuesta(texto);
+    return {
+      ...parsed,
+      _tokens: { input: usage.input_tokens || 0, output: usage.output_tokens || 0 },
+    };
   } catch (err) {
     // Si falla la verificación, asumir legible para no bloquear al paciente
     console.warn("⚠️ verificarCalidad falló, asumiendo legible:", err.message);
-    return { legible: true, tipo: "desconocido", problema: null };
+    return { legible: true, tipo: "desconocido", problema: null, _tokens: { input: 0, output: 0 } };
   }
 }
 
@@ -381,6 +397,10 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
     };
   }
 
+  // Acumular tokens del quality check
+  let totalInput  = calidad._tokens?.input  || 0;
+  let totalOutput = calidad._tokens?.output || 0;
+
   // 3. Guardar en LogIA — tipo detectado por Claude, sin extracción de campos
   const tipoMap = {
     cedula:        "CEDULA",
@@ -396,7 +416,14 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
       pacienteId:      pacienteId || null,
       asesorId:        asesorId   || null,
       tipoDocumento:   tipoDoc,
-      resultadoRaw:    { cloudinaryUrl: cloudinaryUrl || null, tipo: calidad.tipo },
+      resultadoRaw: {
+        cloudinaryUrl:  cloudinaryUrl || null,
+        tipo:           calidad.tipo,
+        tokensInput:    totalInput,
+        tokensOutput:   totalOutput,
+        costUSD:        calcCostUSD(totalInput, totalOutput),
+        modelo:         anthropic.model,
+      },
       resultadoParsed: { legible: true, tipo: calidad.tipo },
       confianza:       1.0,
     },
@@ -405,8 +432,11 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
   // Si es cédula → extraer nombre y número para actualizar el perfil del paciente
   let datosCedula = null;
   if (tipoDoc === "CEDULA") {
-    datosCedula = await extraerDatosCedula(base64, mimeType);
-    // Actualizar resultadoParsed con los datos extraídos
+    datosCedula  = await extraerDatosCedula(base64, mimeType);
+    totalInput  += datosCedula._tokens?.input  || 0;
+    totalOutput += datosCedula._tokens?.output || 0;
+
+    // Actualizar resultadoParsed y resultadoRaw con tokens finales
     await prisma.logIA.update({
       where: { id: log.id },
       data: {
@@ -416,10 +446,20 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
           nombre:   datosCedula.nombre,
           cedula:   datosCedula.cedula,
         },
+        resultadoRaw: {
+          cloudinaryUrl:  cloudinaryUrl || null,
+          tipo:           calidad.tipo,
+          tokensInput:    totalInput,
+          tokensOutput:   totalOutput,
+          costUSD:        calcCostUSD(totalInput, totalOutput),
+          modelo:         anthropic.model,
+        },
         confianza: datosCedula.confianza || 1.0,
       },
     });
   }
+
+  console.log(`💰 LogIA #${log.id} — ${totalInput}in/${totalOutput}out — $${calcCostUSD(totalInput, totalOutput).toFixed(6)}`);
 
   return {
     legible:       true,
@@ -466,4 +506,4 @@ async function validarDocumento({ logId, asesorId, datosValidados, actualizarPac
   return { ok: true, logId };
 }
 
-module.exports = { procesarDocumento, validarDocumento, verificarCalidadDocumento, descargarMediaMeta, extraerDatosCedula };
+module.exports = { procesarDocumento, validarDocumento, verificarCalidadDocumento, descargarMediaMeta, extraerDatosCedula, calcCostUSD };
