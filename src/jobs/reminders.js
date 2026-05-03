@@ -22,8 +22,12 @@ const WA_HEADERS = {
 
 function fmtFecha(fecha) {
   return new Date(fecha).toLocaleString("es-CO", {
-    weekday: "long", day: "numeric", month: "long",
-    hour: "2-digit", minute: "2-digit",
+    timeZone: "America/Bogota",
+    weekday:  "long",
+    day:      "numeric",
+    month:    "long",
+    hour:     "2-digit",
+    minute:   "2-digit",
   });
 }
 
@@ -78,7 +82,7 @@ async function enviarRecordatorio24h() {
             `📍 ${cita.sede.nombre}\n\n` +
             `¿Confirmas tu asistencia?`,
         },
-        footer: { text: "IPS Salud Vida" },
+        footer: { text: "Ser Funcional I.P.S" },
         action: {
           buttons: [
             { type: "reply", reply: { id: "confirmar_asistencia_si", title: "✅ Sí, asistiré"    } },
