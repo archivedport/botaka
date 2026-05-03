@@ -139,9 +139,11 @@ async function handle(req, res) {
 
     // ── Modo BOT: pasar al handler del bot ────────────────────
     try {
-      const { manejarRespuestaConfirmacion } = require("../jobs/reminders");
+      const { manejarRespuestaConfirmacion } = require("../../jobs/reminders");
       if (buttonId && await manejarRespuestaConfirmacion(from, buttonId)) return;
-    } catch(e) { /* reminders.js aún no disponible */ }
+    } catch(e) {
+      console.error("⚠️ manejarRespuestaConfirmacion error:", e.message);
+    }
 
     // Verificar si el bot está en un paso de carga de documentos
     // En ese caso, el bot manejará el media directamente
