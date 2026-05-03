@@ -80,12 +80,13 @@ async function enviarRecordatorio24h() {
             `🩺 *${cita.especialidad}*\n` +
             `📅 ${fmtFecha(cita.fechaInicio)}\n` +
             `📍 ${cita.sede.nombre}\n\n` +
-            `¿Confirmas tu asistencia?`,
+            `⚠️ _Recuerda traer tus documentos físicos para la admisión._\n\n` +
+            `¿Podrás asistir?`,
         },
         footer: { text: "Ser Funcional I.P.S" },
         action: {
           buttons: [
-            { type: "reply", reply: { id: `confirmar_si_${cita.id}`, title: "✅ Sí, asistiré"    } },
+            { type: "reply", reply: { id: `confirmar_si_${cita.id}`, title: "✅ Sí, asistiré"   } },
             { type: "reply", reply: { id: `confirmar_no_${cita.id}`, title: "❌ No podré asistir" } },
           ],
         },
@@ -214,9 +215,9 @@ async function manejarRespuestaConfirmacion(phone, buttonId) {
       type: "text",
       text: {
         body:
-          `✅ *¡Confirmado!* Gracias por confirmar tu asistencia.\n\n` +
-          `Te esperamos:\n📅 ${fmtFecha(cita.fechaInicio)}\n📍 ${cita.sede.nombre}\n\n` +
-          `_Recuerda traer tu documento de identidad y autorización de EPS._`,
+          `✅ *¡Perfecto!* Gracias por avisarnos.\n\n` +
+          `Te esperamos mañana:\n📅 ${fmtFecha(cita.fechaInicio)}\n📍 ${cita.sede.nombre}\n\n` +
+          `_Recuerda traer tus documentos físicos (cédula y autorización EPS) para la admisión._`,
         preview_url: false,
       },
     });
