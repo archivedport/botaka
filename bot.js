@@ -1439,33 +1439,63 @@ async function handleBot(from, text, buttonId, mediaId) {
     // Crear la cita como PENDIENTE — la asesor asigna sede según IPS primaria
     // No pedimos sede al paciente: dependiendo de su ubicación/IPS primaria
     // la asesor determina qué sede le queda más cercana
-    await sendText(from,
-      `✅ *Documentos recibidos.*\n\n` +
-      `Gracias *${nombre}*, hemos recibido tu información. 😊\n\n` +
-      `📋 *¿En qué municipio o zona vives?*\n` +
-      `_Esto nos ayuda a asignarte la sede más cercana._`
-    );
+    await sendButtons(from, {
+      body:
+        `✅ *Documentos recibidos.*\n\n` +
+        `Gracias *${nombre}*, hemos recibido tu información. 😊\n\n` +
+        `📧 *¿Cuál es tu correo electrónico?*\n` +
+        `_Opcional — lo usamos para enviarte confirmaciones._`,
+      buttons: [
+        { id: "correo_omitir", title: "⏭️ Omitir" },
+      ],
+    });
     await saveSession(from, {
-      paso:  "cita_ubicacion",
+      paso:  "cita_correo",
       datos: { ...sesion.datos, logIdHistorial, urlHistorial },
     });
     return;
   }
 
-  // ── Ubicación del paciente (para asignar sede) ────────────────
-  if (sesion.paso === "cita_ubicacion") {
-    const ubicacion = text?.trim();
-    if (!ubicacion || ubicacion.length < 3) {
-      await sendText(from, "Por favor escribe el municipio o zona donde vives 📍:");
-      return;
+  // ── Correo electrónico del paciente (opcional) ────────────────
+  if (sesion.paso === "cita_correo") {
+    const nombre = sesion.datos.nombre || "Paciente";
+    let email = null;
+
+    if (payload === "correo_omitir" || text?.toLowerCase() === "omitir") {
+      // Paciente omitió el correo — continuar sin él
+      email = null;
+    } else {
+      const textoEmail = text?.trim().toLowerCase();
+      // Validación básica de email
+      const esEmail = textoEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(textoEmail);
+      if (!esEmail) {
+        await sendButtons(from, {
+          body:
+            `⚠️ Ese no parece un correo válido.\n\n` +
+            `Por favor escribe tu correo electrónico (ej: nombre@gmail.com)\n` +
+            `o presiona *Omitir* si no deseas proporcionarlo.`,
+          buttons: [
+            { id: "correo_omitir", title: "⏭️ Omitir" },
+          ],
+        });
+        return;
+      }
+      email = textoEmail;
     }
 
-    const nombre = sesion.datos.nombre || "Paciente";
+    // Guardar email en el perfil del paciente
+    if (email) {
+      try {
+        const paciente = await obtenerPaciente(from);
+        if (paciente) await actualizarPacienteAPI(paciente.id, { email });
+      } catch(e) { console.warn("⚠️ guardar email:", e.message); }
+    }
+
     await saveSession(from, {
       paso:  "cita_sede",
-      datos: { ...sesion.datos, ubicacion },
+      datos: { ...sesion.datos, email },
     });
-    await sendText(from, `📍 Ubicación registrada: *${ubicacion}*\n\nSelecciona la sede para tu cita:`);
+    await sendText(from, `${email ? `📧 Correo registrado.` : `👍 Sin problema.`}\n\nSelecciona la sede para tu cita:`);
     await menuSedesCita(from);
     return;
   }
