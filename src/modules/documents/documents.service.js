@@ -115,6 +115,12 @@ Solo rechaza si los datos son completamente ilegibles o si claramente NO es el r
 
 SE ESPERA: Autorización o remisión emitida por la EPS para la atención en la IPS.
 Puede ser: papel con membrete de la EPS, código de autorización, orden de servicio, remisión.
+
+REGLAS DE COMPLETITUD — el documento debe verse completo:
+- Las 4 esquinas/bordes de la hoja deben ser visibles en la imagen
+- El texto debe ser legible (no borroso, no pixelado)
+- Si la hoja está cortada por cualquier lado → legible: false, problema: "El documento está cortado. Por favor toma la foto más lejos para que se vea la hoja completa con las 4 esquinas visibles."
+- Si el texto es ilegible por tamaño, brillo o desenfoque → legible: false, problema: "El texto no es legible. Por favor toma la foto con mejor iluminación y asegúrate de que las letras se lean claramente."
 - Si es una cédula → legible: false, problema: "Eso es una cédula, no la autorización. Por favor envía el documento de autorización que te dio tu EPS."
 - Si es una orden médica (firmada por médico, con diagnóstico) → legible: false, problema: "Eso parece una orden médica, no la autorización EPS. Por favor envía la autorización que te entregó tu EPS."
 - Si es historial clínico → legible: false, problema: "Eso es una historia clínica, no la autorización. Por favor envía la autorización de tu EPS."
@@ -124,10 +130,16 @@ Puede ser: papel con membrete de la EPS, código de autorización, orden de serv
       return base + `
 
 SE ESPERA: Historia clínica, evolución médica o cualquier documento clínico del paciente.
+
+REGLAS DE COMPLETITUD — el documento debe verse completo:
+- Las 4 esquinas/bordes de la hoja deben ser visibles en la imagen
+- El texto debe ser legible (no borroso, no pixelado)
+- Si la hoja está cortada por cualquier lado → legible: false, problema: "El documento está cortado. Por favor toma la foto más lejos para que se vea la hoja completa con las 4 esquinas visibles."
+- Si el texto es ilegible por tamaño, brillo o desenfoque → legible: false, problema: "El texto no es legible. Por favor toma la foto con mejor iluminación y asegúrate de que las letras se lean claramente."
 - Si es una cédula → legible: false, problema: "Eso es una cédula, no una historia clínica. Por favor envía tu historia clínica o escribe 'omitir' si no la tienes."
 - Si es una autorización EPS → legible: false, problema: "Eso es una autorización EPS, no la historia clínica. Por favor envía tu historia clínica o escribe 'omitir'."
 - Si es foto personal o no es documento → legible: false, problema: "No es un documento clínico válido. Por favor envía tu historia clínica o escribe 'omitir'."
-- Ser más permisivo aquí: cualquier documento médico (receta, examen, evolución) es aceptable.`;
+- Cualquier documento médico (receta, examen, evolución) es aceptable siempre que esté completo y legible.`;
 
     default:
       // Prompt genérico para uso automático (modo MANUAL, etc.)
