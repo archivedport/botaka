@@ -101,8 +101,14 @@ RECHAZA ABSOLUTAMENTE TODO lo que no sea ese reverso específico:
 - Si es orden médica, autorización, historial u otro documento → legible: false, problema: "Se esperaba el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."
 - Si es foto personal o no es documento → legible: false, problema: "No es el reverso de la cédula. Por favor envía la parte trasera con la huella dactilar."
 
-Solo acepta si claramente ves: fondo amarillo/dorado, huella dactilar grande, fecha de nacimiento, lugar de expedición.
-En caso de duda → legible: false.`;
+Acepta si puedes identificar AL MENOS DOS de estos elementos:
+- Huella dactilar visible
+- Fecha de nacimiento legible
+- Lugar de expedición legible
+- Código de barras o número de serie en la parte inferior
+
+El documento puede estar desgastado, amarillento o con manchas — eso es normal en cédulas antiguas.
+Solo rechaza si los datos son completamente ilegibles o si claramente NO es el reverso de una cédula antigua colombiana.`;
 
     case "cita_doc_autorizacion":
       return base + `
