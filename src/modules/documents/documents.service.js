@@ -38,6 +38,24 @@ Extrae los datos y responde ÚNICAMENTE con un JSON válido sin bloques de códi
 Si no puedes leer un campo, usa null. El campo confianza va de 0.0 a 1.0.
 No incluyas texto fuera del JSON.`;
 
+// ── Prompt de extracción específico para cédula colombiana ───
+const CEDULA_EXTRACTION_PROMPT = `Analiza esta imagen de una cédula de ciudadanía o tarjeta de identidad colombiana.
+
+Extrae ÚNICAMENTE estos datos y responde con JSON válido sin bloques de código:
+{
+  "nombre": "Nombre completo (apellidos + nombres) tal como aparece en el documento o null",
+  "cedula": "Número de documento SIN puntos ni espacios (solo dígitos) o null",
+  "confianza": 0.0
+}
+
+INSTRUCCIONES:
+- Para cédula ANTIGUA (amarilla): el número está en el frente junto al texto "NÚMERO"
+- Para cédula MODERNA (azul): el número está bajo la foto
+- El nombre completo incluye APELLIDOS y NOMBRES — cópialos exactamente como aparecen
+- Si no puedes leer algún campo con certeza, usa null
+- confianza: 0.0 a 1.0 según qué tan legibles están los datos
+- No incluyas texto fuera del JSON`;
+
 // ── Prompt de control de calidad ─────────────────────────────
 // Gemini evalúa si la imagen es procesable ANTES de hacer la
 // extracción completa. Evita pasar imágenes borrosas o inválidas
@@ -224,6 +242,45 @@ async function analizarConGemini(base64, mimeType) {
 }
 
 
+// ── Extracción específica de datos de cédula ─────────────────
+/**
+ * Extrae nombre y número de documento de una imagen de cédula.
+ * Solo se llama cuando el quality check ya confirmó que es una cédula válida.
+ */
+async function extraerDatosCedula(base64, mimeType) {
+  try {
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model:      anthropic.model,
+        max_tokens: 256,
+        messages: [{
+          role:    "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+            { type: "text",  text: CEDULA_EXTRACTION_PROMPT },
+          ],
+        }],
+      },
+      {
+        headers: {
+          "Content-Type":      "application/json",
+          "x-api-key":         anthropic.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        timeout: 20000,
+      }
+    );
+    const texto = res.data?.content?.[0]?.text || "";
+    const datos = parsearRespuesta(texto);
+    console.log(`📋 Cédula extraída: nombre=${datos.nombre} cedula=${datos.cedula}`);
+    return datos;
+  } catch (err) {
+    console.warn("⚠️ extraerDatosCedula falló:", err.message);
+    return { nombre: null, cedula: null, confianza: 0 };
+  }
+}
+
 // ── Parsear respuesta de Gemini ───────────────────────────────
 
 function parsearRespuesta(texto) {
@@ -345,13 +402,33 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
     },
   });
 
+  // Si es cédula → extraer nombre y número para actualizar el perfil del paciente
+  let datosCedula = null;
+  if (tipoDoc === "CEDULA") {
+    datosCedula = await extraerDatosCedula(base64, mimeType);
+    // Actualizar resultadoParsed con los datos extraídos
+    await prisma.logIA.update({
+      where: { id: log.id },
+      data: {
+        resultadoParsed: {
+          legible:  true,
+          tipo:     calidad.tipo,
+          nombre:   datosCedula.nombre,
+          cedula:   datosCedula.cedula,
+        },
+        confianza: datosCedula.confianza || 1.0,
+      },
+    });
+  }
+
   return {
     legible:       true,
     problema:      null,
     logId:         log.id,
     cloudinaryUrl: cloudinaryUrl || null,
     tipoDocumento: tipoDoc,
-    subtipo:       calidad.subtipo || null,  // cedula_antigua_frente | cedula_moderna | etc.
+    subtipo:       calidad.subtipo || null,
+    datos:         datosCedula,  // { nombre, cedula } — solo para cédulas
   };
 }
 
@@ -389,4 +466,4 @@ async function validarDocumento({ logId, asesorId, datosValidados, actualizarPac
   return { ok: true, logId };
 }
 
-module.exports = { procesarDocumento, validarDocumento, verificarCalidadDocumento, descargarMediaMeta };
+module.exports = { procesarDocumento, validarDocumento, verificarCalidadDocumento, descargarMediaMeta, extraerDatosCedula };
