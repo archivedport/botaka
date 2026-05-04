@@ -388,7 +388,36 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
   // 2. Verificar calidad con Claude (prompt ligero)
   const calidad = await verificarCalidadDocumento(base64, mimeType, paso || "default");
 
+  // 3. Si Claude rechaza la imagen, guardar el costo igualmente antes de retornar
+  //    La llamada ya ocurrió y ya costó tokens — no registrarla sería perder trazabilidad
   if (!calidad.legible) {
+    const tiInput  = calidad._tokens?.input  || 0;
+    const tiOutput = calidad._tokens?.output || 0;
+    try {
+      await prisma.logIA.create({
+        data: {
+          mediaId,
+          pacienteId:      pacienteId || null,
+          asesorId:        asesorId   || null,
+          tipoDocumento:   "OTRO",
+          resultadoRaw: {
+            cloudinaryUrl:  null,
+            tipo:           calidad.tipo || "rechazado",
+            tokensInput:    tiInput,
+            tokensOutput:   tiOutput,
+            costUSD:        calcCostUSD(tiInput, tiOutput),
+            modelo:         anthropic.model,
+            rechazado:      true,
+            problema:       calidad.problema,
+          },
+          resultadoParsed: { legible: false, problema: calidad.problema },
+          confianza:       0,
+        },
+      });
+      console.log(`💰 Rechazado (${calidad.tipo}) — ${tiInput}in/${tiOutput}out — $${calcCostUSD(tiInput, tiOutput).toFixed(6)}`);
+    } catch (logErr) {
+      console.warn("⚠️ No se pudo guardar log de rechazo:", logErr.message);
+    }
     return {
       legible:       false,
       problema:      calidad.problema || "La imagen no es suficientemente clara.",
@@ -401,7 +430,7 @@ async function procesarDocumento({ mediaId, base64: b64, mimeType: mt, cloudinar
   let totalInput  = calidad._tokens?.input  || 0;
   let totalOutput = calidad._tokens?.output || 0;
 
-  // 3. Guardar en LogIA — tipo detectado por Claude, sin extracción de campos
+  // 4. Guardar en LogIA — tipo detectado por Claude, sin extracción de campos
   const tipoMap = {
     cedula:        "CEDULA",
     carnet_eps:    "CARNET_EPS",
