@@ -1368,9 +1368,9 @@ async function handleBot(from, text, buttonId, mediaId) {
       }
 
       await sendText(from,
-        `✅ Orden médica recibida.\n\n` +
-        `Por último, envía tu *historia clínica* 📋\n` +
-        `_(Si no la tienes disponible, escribe *"omitir"*)_`
+        `✅ Autorización recibida.\n\n` +
+        `Por último, si tienes *historia clínica* envíala como foto 📋\n` +
+        `_(Si no la tienes, toca el botón de abajo)_`
       );
 
       await saveSession(from, {
@@ -1396,12 +1396,15 @@ async function handleBot(from, text, buttonId, mediaId) {
 
   // ── Paso 3 de documentos: Historia clínica (opcional) ────────
   if (sesion.paso === "cita_doc_historial") {
-    const omitir = ["omitir", "no tengo", "skip", "no"].includes(msg);
+    const omitir = payload === "historial_omitir" || ["omitir", "no tengo", "skip"].includes(msg);
 
     if (!mediaId && !omitir) {
-      await sendText(from,
-        `📋 Envía tu *historia clínica* o escribe *"omitir"* si no la tienes disponible.`
-      );
+      await sendButtons(from, {
+        body: `📋 Envía tu *historia clínica* como foto, o toca el botón si no la tienes.`,
+        buttons: [
+          { id: "historial_omitir", title: "No tengo historial" },
+        ],
+      });
       return;
     }
 
@@ -1413,11 +1416,13 @@ async function handleBot(from, text, buttonId, mediaId) {
       try {
         const resultado = await procesarDocAPI(from, mediaId, "cita_doc_historial");
         if (resultado.legible === false) {
-          await sendText(from,
-            `📷 No pudimos leer la historia clínica.\n\n` +
-            `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
-            `Vuelve a enviarla o escribe *"omitir"* para continuar.`
-          );
+          await sendButtons(from, {
+            body:
+              `📷 No pudimos leer la historia clínica.\n\n` +
+              `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
+              `Vuelve a enviarla o toca el botón para continuar sin historial.`,
+            buttons: [{ id: "historial_omitir", title: "No tengo historial" }],
+          });
           return;
         }
         logIdHistorial = resultado.logId;
@@ -1636,8 +1641,6 @@ async function handleBot(from, text, buttonId, mediaId) {
 
       if (esColision) {
         await sendText(from, "⚠️ Ese horario acaba de ser reservado por otra persona. Selecciona otro:");
-        await enviarSlotsParaDia(from, sesion.datos.sede, sesion.datos.especialidad, sesion.datos.fechaStr, slots);
-        return;
       } else if (esTimeout) {
         await sendText(from, "⏱️ El servidor tardó demasiado. Intenta seleccionar el horario nuevamente:");
       } else {
