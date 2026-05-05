@@ -551,10 +551,10 @@ async function menuEspecialidades(to) {
     footer:      "Ser Funcional — Unidad Integral I.P.S",
     buttonLabel: "Ver servicios",
     sections: [{ title: "Terapias disponibles", rows: [
-      { id: "esp_fisica",       title: "🦴 Terapia Física",       description: "Rehabilitación física y motora" },
-      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional",  description: "Actividades de la vida diaria"  },
-      { id: "esp_fono",         title: "🗣️ Fonoaudiología",       description: "Lenguaje, voz y deglución"      },
-      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria", description: "Solo nebulizaciones (trae el medicamento)" },
+      { id: "esp_fisica",       title: "🦴 Terapia Física"       },
+      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional"  },
+      { id: "esp_fono",         title: "🗣️ Fonoaudiología"       },
+      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria" },
     ]}],
   });
 }
@@ -1077,8 +1077,7 @@ async function handleBot(from, text, buttonId, mediaId) {
       await sendText(from,
         `💨 *Terapia Respiratoria*\n\n` +
         `Las nebulizaciones requieren coordinación especial con nuestro equipo.\n\n` +
-        `⏳ Un asesor se comunicará contigo en breve para ayudarte con tu cita. 🔔\n` +
-        `Mientras esperas, puedes seguir enviando mensajes.`
+        `⏳ Un asesor se comunicará contigo en breve para ayudarte con tu cita. 🔔`
       );
       await saveSession(from, { paso: "con_asesor", datos: { motivo, especialidad: "Terapia Respiratoria" } });
       await axios.post(
@@ -1724,8 +1723,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
     await sendText(from,
       `⏳ *Conectando con un asesor...*\n\nMotivo: _${motivo}_\n\n` +
-      `Un asesor se comunicará contigo en breve. 🔔\n` +
-      `Mientras esperas, puedes seguir enviando mensajes.`
+      `Un asesor se comunicará contigo en breve. 🔔`
     );
     await saveSession(from, { paso: "con_asesor", datos: { motivo } });
 
