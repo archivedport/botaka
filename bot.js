@@ -339,43 +339,43 @@ const SEDES_MAP = {
 const SEDES_INFO = {
   sede_monteria: {
     nombre:  "Montería",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "Cl. 24 #15-35",
+    tel:     "324 422 6680",
     horario: "Lun–Vie: 11:00–11:30 (mañana) · 17:00–17:30 (tarde)",
     nota:    "Atención de lunes a viernes en dos jornadas.",
   },
   sede_tierralta: {
     nombre:  "Tierralta",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "(GESTAR SALUD)",
+    tel:     "324 422 6680",
     horario: "Lun/Mié/Vie: 16:40–17:10 · Mar/Jue: 11:00–11:30 y 16:40–17:10",
     nota:    "Martes y jueves tienen jornada mañana y tarde.",
   },
   sede_cdo: {
     nombre:  "Ciénaga de Oro",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "(GESTAR SALUD)",
+    tel:     "324 422 6680",
     horario: "Lun–Vie: 11:00–11:20 (mañana) · 16:50–17:00 (tarde)",
     nota:    "Atención de lunes a viernes.",
   },
   sede_cerete: {
     nombre:  "Cereté",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "Calle 13A Cra 15-45 B/La Ceiba Orilla del Río (GESTAR SALUD)",
+    tel:     "324 422 6680",
     horario: "Lun/Mié/Vie: 11:00–11:30 · Mar/Jue: 13:30, 14:30, 15:30",
     nota:    "Martes y jueves con atención solo en tarde.",
   },
   sede_sancarlos: {
     nombre:  "San Carlos",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "(GESTAR SALUD)",
+    tel:     "324 422 6680",
     horario: "Martes y Jueves: 07:40, 08:30, 09:20, 10:00",
     nota:    "Atención solo martes y jueves en la mañana.",
   },
   sede_valencia: {
     nombre:  "Valencia",
-    dir:     "Dirección — actualizar",
-    tel:     "PENDIENTE",
+    dir:     "(GESTAR SALUD)",
+    tel:     "324 422 6680",
     horario: "Lun/Mié/Vie: 10:40, 10:50, 11:00",
     nota:    "Atención lunes, miércoles y viernes.",
   },
@@ -551,10 +551,10 @@ async function menuEspecialidades(to) {
     footer:      "Ser Funcional — Unidad Integral I.P.S",
     buttonLabel: "Ver servicios",
     sections: [{ title: "Terapias disponibles", rows: [
-      { id: "esp_fisica",       title: "🦴 Terapia Física",       description: "Rehabilitación física y motora" },
-      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional",  description: "Actividades de la vida diaria"  },
-      { id: "esp_fono",         title: "🗣️ Fonoaudiología",       description: "Lenguaje, voz y deglución"      },
-      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria", description: "Solo nebulizaciones (trae el medicamento)" },
+      { id: "esp_fisica",       title: "🦴 Terapia Física"      },
+      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional" },
+      { id: "esp_fono",         title: "🗣️ Fonoaudiología"      },
+      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria"},
     ]}],
   });
 }
@@ -1063,13 +1063,32 @@ async function handleBot(from, text, buttonId, mediaId) {
       esp_fono:         "Fonoaudiología",
       esp_respiratoria: "Terapia Respiratoria",
     };
-    if (ESP[payload]) {
-      await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
-      await menuEPS(from, ESP[payload]);
-    } else {
+
+    if (!ESP[payload]) {
       await sendText(from, "Por favor selecciona el tipo de terapia de la lista 👆");
       await menuEspecialidades(from);
+      return;
     }
+
+    // Terapia Respiratoria → asesor directo (solo nebulizaciones)
+    if (payload === "esp_respiratoria") {
+      const motivo = `Solicitud de cita — Terapia Respiratoria (nebulizaciones)`;
+      await sendText(from,
+        `💨 *Terapia Respiratoria*\n\n` +
+        `Las nebulizaciones requieren coordinación especial con nuestro equipo.\n\n` +
+        `⏳ Un asesor se comunicará contigo en breve para ayudarte con tu cita. 🔔`
+      );
+      await saveSession(from, { paso: "con_asesor", datos: { ...sesion.datos, motivo, especialidad: "Terapia Respiratoria" } });
+      await axios.post(
+        `${API_BASE}/api/chat/request-asesor`,
+        { phone: from, motivo },
+        { headers: await apiHeaders(), timeout: 3000 }
+      ).catch(() => {});
+      return;
+    }
+
+    await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
+    await menuEPS(from, ESP[payload]);
     return;
   }
 
@@ -1680,8 +1699,7 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
     await sendText(from,
       `⏳ *Conectando con un asesor...*\n\nMotivo: _${motivo}_\n\n` +
-      `Un asesor se comunicará contigo en breve. 🔔\n` +
-      `Mientras esperas, puedes seguir enviando mensajes.`
+      `Un asesor se comunicará contigo en breve. 🔔`
     );
     await saveSession(from, { paso: "con_asesor", datos: { motivo } });
 
