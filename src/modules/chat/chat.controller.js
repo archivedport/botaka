@@ -33,8 +33,42 @@ async function toggleStatus(req, res) {
 
     await setChatStatus(phone, nuevoEstado, asesorId);
 
-    // Si toma control, limpiar solicitud pendiente
-    if (action === "TOMAR") await clearAsesorRequest(phone);
+    // Si toma control: limpiar solicitud pendiente y enviar mensaje de bienvenida
+    if (action === "TOMAR") {
+      await clearAsesorRequest(phone);
+
+      // Mensaje automático de bienvenida al paciente
+      try {
+        const mensajeBienvenida = `¡Hola! 👋 Soy *${req.usuario.nombre}*, asesora de Ser Funcional. Estoy aquí para ayudarte. ¿Cuéntame, en qué te puedo colaborar?`;
+        const url = `${meta.baseUrl()}/${meta.phoneId}/messages`;
+        await axios.post(url,
+          {
+            messaging_product: "whatsapp",
+            to:   phone,
+            type: "text",
+            text: { body: mensajeBienvenida, preview_url: false },
+          },
+          { headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" } }
+        );
+        await guardarMensaje({ phone, de: "ASESOR", texto: mensajeBienvenida, asesorId: req.usuario.id });
+        getIO().to(`chat:${phone}`).emit("chat:new_message", {
+          phone,
+          from:         "ASESOR",
+          asesorId:     req.usuario.id,
+          asesorNombre: req.usuario.nombre,
+          mensaje:      mensajeBienvenida,
+          timestamp:    new Date().toISOString(),
+        });
+        getIO().to("asesores").emit("chat:list_update", {
+          phone,
+          from:      "ASESOR",
+          mensaje:   mensajeBienvenida,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn("⚠️ No se pudo enviar mensaje de bienvenida:", e.message);
+      }
+    }
 
     // Notificar a la sala WebSocket del asesor
     const io = getIO();
