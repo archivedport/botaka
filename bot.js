@@ -551,10 +551,10 @@ async function menuEspecialidades(to) {
     footer:      "Ser Funcional — Unidad Integral I.P.S",
     buttonLabel: "Ver servicios",
     sections: [{ title: "Terapias disponibles", rows: [
-      { id: "esp_fisica",       title: "🦴 Terapia Física"       },
-      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional"  },
-      { id: "esp_fono",         title: "🗣️ Fonoaudiología"       },
-      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria" },
+      { id: "esp_fisica",       title: "🦴 Terapia Física",       description: "Rehabilitación física y motora" },
+      { id: "esp_ocupacional",  title: "🖐️ Terapia Ocupacional",  description: "Actividades de la vida diaria"  },
+      { id: "esp_fono",         title: "🗣️ Fonoaudiología",       description: "Lenguaje, voz y deglución"      },
+      { id: "esp_respiratoria", title: "💨 Terapia Respiratoria", description: "Solo nebulizaciones (trae el medicamento)" },
     ]}],
   });
 }
@@ -568,12 +568,11 @@ async function menuEPS(to, especialidad) {
     sections: [{
       title: "EPS con convenio",
       rows: [
-        { id: "eps_nueva_contributivo", title: "Nueva EPS Contributivo",  description: "Régimen contributivo" },
-        { id: "eps_nueva_subsidiado",   title: "Nueva EPS Subsidiado",    description: "Régimen subsidiado"   },
-        { id: "eps_gestar",             title: "Gestar Salud",            description: "Contributivo / Subsidiado" },
-        { id: "eps_salud_total",        title: "Salud Total",             description: "Solo adultos, orden a Gestar" },
-        { id: "eps_amigos",             title: "Fundación Amigos Salud",  description: "Con autorización previa" },
-        { id: "eps_particular",         title: "Particular",              description: "Pago directo en sede" },
+        { id: "eps_nueva_contributivo", title: "Nueva EPS Contributivo" },
+        { id: "eps_nueva_subsidiado",   title: "Nueva EPS Subsidiado"   },
+        { id: "eps_salud_total",        title: "Salud Total"            },
+        { id: "eps_amigos",             title: "Fundación Amigos Salud" },
+        { id: "eps_particular",         title: "Particular"             },
       ],
     }],
   });
@@ -1064,32 +1063,13 @@ async function handleBot(from, text, buttonId, mediaId) {
       esp_fono:         "Fonoaudiología",
       esp_respiratoria: "Terapia Respiratoria",
     };
-
-    if (!ESP[payload]) {
+    if (ESP[payload]) {
+      await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
+      await menuEPS(from, ESP[payload]);
+    } else {
       await sendText(from, "Por favor selecciona el tipo de terapia de la lista 👆");
       await menuEspecialidades(from);
-      return;
     }
-
-    // Terapia Respiratoria → asesor directo (solo nebulizaciones, requiere gestión manual)
-    if (payload === "esp_respiratoria") {
-      const motivo = "Solicitud de cita — Terapia Respiratoria (nebulizaciones)";
-      await sendText(from,
-        `💨 *Terapia Respiratoria*\n\n` +
-        `Las nebulizaciones requieren coordinación especial con nuestro equipo.\n\n` +
-        `⏳ Un asesor se comunicará contigo en breve para ayudarte con tu cita. 🔔`
-      );
-      await saveSession(from, { paso: "con_asesor", datos: { motivo, especialidad: "Terapia Respiratoria" } });
-      await axios.post(
-        `${API_BASE}/api/chat/request-asesor`,
-        { phone: from, motivo },
-        { headers: await apiHeaders(), timeout: 3000 }
-      ).catch(() => {});
-      return;
-    }
-
-    await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
-    await menuEPS(from, ESP[payload]);
     return;
   }
 
@@ -1098,7 +1078,6 @@ async function handleBot(from, text, buttonId, mediaId) {
     const EPS = {
       eps_nueva_contributivo: "Nueva EPS Contributivo",
       eps_nueva_subsidiado:   "Nueva EPS Subsidiado",
-      eps_gestar:             "Gestar Salud",
       eps_salud_total:        "Salud Total",
       eps_amigos:             "Fundación Amigos de la Salud",
       eps_particular:         "Particular",
@@ -1112,25 +1091,41 @@ async function handleBot(from, text, buttonId, mediaId) {
 
     const epsNombre = EPS[payload];
 
-    // ── Caso especial: Salud Total — solo adultos con orden a Gestar ──
+    // ── Salud Total → asesor directo ──────────────────────────
     if (payload === "eps_salud_total") {
-      await saveSession(from, { paso: "cita_eps_salud_total", datos: { ...sesion.datos, eps: epsNombre } });
-      await sendButtons(from, {
-        header: "⚠️ Importante — Salud Total",
-        body:
-          `Atendemos Salud Total *únicamente* si:\n\n` +
-          `✅ Eres mayor de edad (18 años o más)\n` +
-          `✅ La orden médica está *dirigida a Gestar Salud*\n\n` +
-          `¿Tu orden cumple estas condiciones?`,
-        buttons: [
-          { id: "salud_total_si", title: "✅ Sí, cumple"          },
-          { id: "salud_total_no", title: "❌ No estoy seguro" },
-        ],
-      });
+      const motivo = `Solicitud de cita — Salud Total (${sesion.datos.especialidad || "terapia"})`;
+      await sendText(from,
+        `🏥 *Salud Total*\n\n` +
+        `Para atención con Salud Total coordinaremos tu cita directamente con nuestro equipo.\n\n` +
+        `⏳ Un asesor se comunicará contigo en breve. 🔔`
+      );
+      await saveSession(from, { paso: "con_asesor", datos: { ...sesion.datos, eps: epsNombre, motivo } });
+      await axios.post(
+        `${API_BASE}/api/chat/request-asesor`,
+        { phone: from, motivo },
+        { headers: await apiHeaders(), timeout: 3000 }
+      ).catch(() => {});
       return;
     }
 
-    // ── Caso especial: Particular → pasa al asesor ────────────
+    // ── Fundación Amigos de la Salud → asesor directo ─────────
+    if (payload === "eps_amigos") {
+      const motivo = `Solicitud de cita — Fundación Amigos de la Salud (${sesion.datos.especialidad || "terapia"})`;
+      await sendText(from,
+        `🏥 *Fundación Amigos de la Salud*\n\n` +
+        `Los pacientes de Fundación Amigos son admisionados directamente en la fundación.\n\n` +
+        `⏳ Un asesor se comunicará contigo en breve para coordinar tu cita. 🔔`
+      );
+      await saveSession(from, { paso: "con_asesor", datos: { ...sesion.datos, eps: epsNombre, motivo } });
+      await axios.post(
+        `${API_BASE}/api/chat/request-asesor`,
+        { phone: from, motivo },
+        { headers: await apiHeaders(), timeout: 3000 }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Particular → pasa al asesor ───────────────────────────
     if (payload === "eps_particular") {
       await sendText(from,
         `💳 *Paciente Particular*\n\n` +
@@ -1142,16 +1137,7 @@ async function handleBot(from, text, buttonId, mediaId) {
       return;
     }
 
-    // ── Caso especial: Fundación Amigos de la Salud ───────────
-    if (payload === "eps_amigos") {
-      await sendText(from,
-        `ℹ️ *Fundación Amigos de la Salud*\n\n` +
-        `Los pacientes de Fundación Amigos de la Salud son admisionados directamente en la fundación y llegan con autorización previa.\n\n` +
-        `Si ya tienes tu autorización, continúa. Si no, acércate primero a la fundación. 👍`
-      );
-    }
-
-    // Flujo normal con documentos
+    // ── Flujo normal con documentos (Nueva EPS Contributivo / Subsidiado) ──
     await saveSession(from, { paso: "cita_doc_cedula", datos: { ...sesion.datos, eps: epsNombre } });
     await sendText(from,
       `✅ EPS: *${epsNombre}*\n\n` +
@@ -1159,35 +1145,6 @@ async function handleBot(from, text, buttonId, mediaId) {
       `📷 Tu *cédula de ciudadanía* (CC) o *tarjeta de identidad* (TI)\n\n` +
       `_Solo el frente. Buena luz, sin borrosa, todo visible._`
     );
-    return;
-  }
-
-  // ── Salud Total: confirmación de requisitos ──────────────────
-  if (sesion.paso === "cita_eps_salud_total") {
-    if (payload === "salud_total_si") {
-      await saveSession(from, { paso: "cita_doc_cedula", datos: sesion.datos });
-      await sendText(from,
-        `✅ Perfecto.\n\n` +
-        `📋 Envía una foto clara de tu *cédula de ciudadanía* (CC)\n` +
-        `_Solo el frente. Buena luz, sin borrosa, todo visible._`
-      );
-    } else if (payload === "salud_total_no") {
-      await sendText(from,
-        `ℹ️ Si tu orden médica *no está dirigida a Gestar Salud* o eres menor de edad con Salud Total, lamentablemente no podemos atenderte directamente.\n\n` +
-        `Te recomendamos comunicarte con tu EPS para que te remitan correctamente. 🙏`
-      );
-      await clearSession(from);
-      await saveSession(from, { paso: "menu", datos: {} });
-      await menuPrincipal(from);
-    } else {
-      await sendButtons(from, {
-        body: "¿La orden está dirigida a Gestar Salud y eres mayor de edad?",
-        buttons: [
-          { id: "salud_total_si", title: "✅ Sí, cumple"          },
-          { id: "salud_total_no", title: "❌ No estoy seguro" },
-        ],
-      });
-    }
     return;
   }
 
@@ -1723,7 +1680,8 @@ async function handleBot(from, text, buttonId, mediaId) {
     }
     await sendText(from,
       `⏳ *Conectando con un asesor...*\n\nMotivo: _${motivo}_\n\n` +
-      `Un asesor se comunicará contigo en breve. 🔔`
+      `Un asesor se comunicará contigo en breve. 🔔\n` +
+      `Mientras esperas, puedes seguir enviando mensajes.`
     );
     await saveSession(from, { paso: "con_asesor", datos: { motivo } });
 
