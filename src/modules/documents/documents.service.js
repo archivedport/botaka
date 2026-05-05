@@ -138,18 +138,19 @@ Solo rechaza si los datos son completamente ilegibles o si claramente NO es el r
     case "cita_doc_autorizacion":
       return base + `
 
-SE ESPERA: Autorización o remisión emitida por la EPS para la atención en la IPS.
-Puede ser: papel con membrete de la EPS, código de autorización, orden de servicio, remisión.
+SE ESPERA: Orden médica firmada por un médico, que indica el tipo de terapia que necesita el paciente.
+Puede ser: orden en papel con membrete de la EPS o del médico, con diagnóstico y firma/sello del médico.
 
 REGLAS DE COMPLETITUD — el documento debe verse completo:
 - Las 4 esquinas/bordes de la hoja deben ser visibles en la imagen
 - El texto debe ser legible (no borroso, no pixelado)
 - Si la hoja está cortada por cualquier lado → legible: false, problema: "El documento está cortado. Por favor toma la foto más lejos para que se vea la hoja completa con las 4 esquinas visibles."
 - Si el texto es ilegible por tamaño, brillo o desenfoque → legible: false, problema: "El texto no es legible. Por favor toma la foto con mejor iluminación y asegúrate de que las letras se lean claramente."
-- Si es una cédula → legible: false, problema: "Eso es una cédula, no la autorización. Por favor envía el documento de autorización que te dio tu EPS."
-- Si es una orden médica (firmada por médico, con diagnóstico) → legible: false, problema: "Eso parece una orden médica, no la autorización EPS. Por favor envía la autorización que te entregó tu EPS."
-- Si es historial clínico → legible: false, problema: "Eso es una historia clínica, no la autorización. Por favor envía la autorización de tu EPS."
-- Si es foto personal o no es documento → legible: false, problema: "No es un documento válido. Por favor envía la autorización de tu EPS."`;
+- Si es una cédula → legible: false, problema: "Eso es una cédula, no la orden médica. Por favor envía la orden que el médico te dio para la terapia."
+- Si es una autorización EPS (sin firma de médico, solo código de autorización) → legible: false, problema: "Eso parece una autorización EPS, no una orden médica. Por favor envía la orden firmada por el médico."
+- Si es historial clínico → legible: false, problema: "Eso es una historia clínica, no la orden médica. Por favor envía la orden que el médico te dio para la terapia."
+- Si es foto personal o no es documento → legible: false, problema: "No es un documento válido. Por favor envía la orden médica."
+- RECHAZA si menciona accidente de tránsito, SOAT, ARL o accidente laboral → legible: false, problema: "No atendemos accidentes de tránsito (SOAT) ni accidentes laborales (ARL). Solo enfermedad general."`;
 
     case "cita_doc_historial":
       return base + `
@@ -162,7 +163,7 @@ REGLAS DE COMPLETITUD — el documento debe verse completo:
 - Si la hoja está cortada por cualquier lado → legible: false, problema: "El documento está cortado. Por favor toma la foto más lejos para que se vea la hoja completa con las 4 esquinas visibles."
 - Si el texto es ilegible por tamaño, brillo o desenfoque → legible: false, problema: "El texto no es legible. Por favor toma la foto con mejor iluminación y asegúrate de que las letras se lean claramente."
 - Si es una cédula → legible: false, problema: "Eso es una cédula, no una historia clínica. Por favor envía tu historia clínica o escribe 'omitir' si no la tienes."
-- Si es una autorización EPS → legible: false, problema: "Eso es una autorización EPS, no la historia clínica. Por favor envía tu historia clínica o escribe 'omitir'."
+- Si es una orden médica → legible: false, problema: "Eso es una orden médica, no la historia clínica. Por favor envía tu historia clínica o escribe 'omitir'."
 - Si es foto personal o no es documento → legible: false, problema: "No es un documento clínico válido. Por favor envía tu historia clínica o escribe 'omitir'."
 - Cualquier documento médico (receta, examen, evolución) es aceptable siempre que esté completo y legible.`;
 
