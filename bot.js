@@ -1064,13 +1064,33 @@ async function handleBot(from, text, buttonId, mediaId) {
       esp_fono:         "Fonoaudiología",
       esp_respiratoria: "Terapia Respiratoria",
     };
-    if (ESP[payload]) {
-      await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
-      await menuEPS(from, ESP[payload]);
-    } else {
+
+    if (!ESP[payload]) {
       await sendText(from, "Por favor selecciona el tipo de terapia de la lista 👆");
       await menuEspecialidades(from);
+      return;
     }
+
+    // Terapia Respiratoria → asesor directo (solo nebulizaciones, requiere gestión manual)
+    if (payload === "esp_respiratoria") {
+      const motivo = "Solicitud de cita — Terapia Respiratoria (nebulizaciones)";
+      await sendText(from,
+        `💨 *Terapia Respiratoria*\n\n` +
+        `Las nebulizaciones requieren coordinación especial con nuestro equipo.\n\n` +
+        `⏳ Un asesor se comunicará contigo en breve para ayudarte con tu cita. 🔔\n` +
+        `Mientras esperas, puedes seguir enviando mensajes.`
+      );
+      await saveSession(from, { paso: "con_asesor", datos: { motivo, especialidad: "Terapia Respiratoria" } });
+      await axios.post(
+        `${API_BASE}/api/chat/request-asesor`,
+        { phone: from, motivo },
+        { headers: await apiHeaders(), timeout: 3000 }
+      ).catch(() => {});
+      return;
+    }
+
+    await saveSession(from, { paso: "cita_eps", datos: { ...sesion.datos, especialidad: ESP[payload] } });
+    await menuEPS(from, ESP[payload]);
     return;
   }
 
