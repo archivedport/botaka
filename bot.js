@@ -1255,8 +1255,8 @@ async function handleBot(from, text, buttonId, mediaId) {
 
       await sendText(from,
         msgConf + `\n\n` +
-        `Ahora envía la foto de tu *orden médica* 📄\n` +
-        `_(La orden que el médico te dio para la terapia)_`
+        `Ahora envía la foto de tu *autorización EPS* 📄\n` +
+        `_(El documento que tu EPS te entrega para autorizar la cita)_`
       );
 
       await saveSession(from, {
@@ -1318,8 +1318,8 @@ async function handleBot(from, text, buttonId, mediaId) {
 
       await sendText(from,
         `✅ *Cédula completa recibida.* \n\n` +
-        `Ahora envía la foto de tu *orden médica* 📄\n` +
-        `_(La orden que el médico te dio para la terapia)_`
+        `Ahora envía la foto de tu *autorización EPS* 📄\n` +
+        `_(El documento que tu EPS te entrega para autorizar la cita)_`
       );
 
       await saveSession(from, {
@@ -1347,20 +1347,20 @@ async function handleBot(from, text, buttonId, mediaId) {
   if (sesion.paso === "cita_doc_autorizacion") {
     if (!mediaId) {
       await sendText(from,
-        `📄 Envía la foto de tu *orden médica*\n` +
+        `📄 Envía la foto de tu *autorización EPS*\n` +
         `_(El papel que te da la EPS para ir a la cita)_`
       );
       return;
     }
 
-    await sendText(from, "🔍 Procesando orden médica... ⏳");
+    await sendText(from, "🔍 Procesando autorización... ⏳");
 
     try {
       const resultado = await procesarDocAPI(from, mediaId, "cita_doc_autorizacion");
 
       if (resultado.legible === false) {
         await sendText(from,
-          `📷 No pudimos leer la orden médica.\n\n` +
+          `📷 No pudimos leer la autorización.\n\n` +
           `*Motivo:* _${resultado.problema || "Imagen poco clara."}_\n\n` +
           `Por favor vuelve a enviarla con buena iluminación.`
         );
@@ -1368,7 +1368,7 @@ async function handleBot(from, text, buttonId, mediaId) {
       }
 
       await sendText(from,
-        `✅ Autorización recibida.\n\n` +
+        `✅ Orden médica recibida.\n\n` +
         `Por último, envía tu *historia clínica* 📋\n` +
         `_(Si no la tienes disponible, escribe *"omitir"*)_`
       );
@@ -1384,11 +1384,11 @@ async function handleBot(from, text, buttonId, mediaId) {
 
     } catch (err) {
       const esTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
-      console.error("❌ procesarDocAPI orden médica:", err.message);
+      console.error("❌ procesarDocAPI autorización:", err.message);
       await sendText(from,
         esTimeout
-          ? "⏱️ El servidor tardó demasiado. Por favor vuelve a enviar la orden médica:"
-          : "⚠️ Problema procesando la orden médica. Por favor vuelve a enviarla:"
+          ? "⏱️ El servidor tardó demasiado. Por favor vuelve a enviar la autorización:"
+          : "⚠️ Problema procesando la autorización. Por favor vuelve a enviarla:"
       );
     }
     return;
@@ -1636,6 +1636,8 @@ async function handleBot(from, text, buttonId, mediaId) {
 
       if (esColision) {
         await sendText(from, "⚠️ Ese horario acaba de ser reservado por otra persona. Selecciona otro:");
+        await enviarSlotsParaDia(from, sesion.datos.sede, sesion.datos.especialidad, sesion.datos.fechaStr, slots);
+        return;
       } else if (esTimeout) {
         await sendText(from, "⏱️ El servidor tardó demasiado. Intenta seleccionar el horario nuevamente:");
       } else {
