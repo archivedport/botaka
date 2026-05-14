@@ -117,11 +117,13 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
             celular:     true,
             email:       true,
             // Documentos IA vinculados al paciente
+            // Traer logs recientes — se filtra por citaId o ventana de tiempo en el map
             logsIA: {
-              where:   { citaId: { not: null } },
               orderBy: { createdAt: "desc" },
+              take:    20,
               select: {
                 id:              true,
+                citaId:          true,
                 tipoDocumento:   true,
                 resultadoRaw:    true,
                 resultadoParsed: true,
@@ -129,6 +131,7 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
                 createdAt:       true,
                 validadoEn:      true,
               },
+            },
             },
           },
         },
@@ -138,11 +141,22 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
     }),
   ]);
 
-  // Aplanar: subir logsIA al nivel raíz como `documentos`
-  const solicitudes = citas.map(c => ({
-    ...c,
-    documentos: c.paciente?.logsIA || [],
-  }));
+  // Filtrar documentos por citaId (citas nuevas) o ventana de tiempo (citas antiguas sin citaId)
+  const VENTANA_MS = 4 * 60 * 60 * 1000; // 4 horas
+  const solicitudes = citas.map(c => {
+    const todos   = c.paciente?.logsIA || [];
+    const citaTime = new Date(c.createdAt).getTime();
+
+    const documentos = todos.filter(log => {
+      // Datos nuevos: el log está directamente vinculado a esta cita
+      if (log.citaId) return log.citaId === c.id;
+      // Datos legacy (citaId null): usar ventana de tiempo como fallback
+      const logTime = new Date(log.createdAt).getTime();
+      return logTime <= citaTime && logTime >= (citaTime - VENTANA_MS);
+    });
+
+    return { ...c, documentos };
+  });
 
   return { total, page, limit, solicitudes };
 }
