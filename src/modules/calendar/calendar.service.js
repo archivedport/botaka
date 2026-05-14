@@ -186,6 +186,25 @@ async function createAppointment(data) {
   const fechaStr = inicio.toISOString().slice(0, 10);
   await invalidarSlotCache(sedeSlug, `${especialidad}:${fechaStr}`);
 
+  // Vincular LogIA recientes del paciente a esta cita
+  // Los documentos se procesan durante el flujo del bot, antes de crear la cita.
+  // Buscamos los LogIA del paciente creados en las últimas 4 horas y los vinculamos.
+  if (cita.pacienteId) {
+    try {
+      const ventana = new Date(inicio.getTime() - 4 * 60 * 60 * 1000);
+      await prisma.logIA.updateMany({
+        where: {
+          pacienteId: cita.pacienteId,
+          citaId:     null,               // solo los que aún no tienen cita
+          createdAt:  { gte: ventana },
+        },
+        data: { citaId: cita.id },
+      });
+    } catch (e) {
+      console.warn("⚠️ No se pudieron vincular LogIA a la cita:", e.message);
+    }
+  }
+
   return cita;
 }
 
