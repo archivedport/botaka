@@ -40,6 +40,7 @@ router.post("/api/auth/change-password", requireAuth, authCtrl.changePassword);
 router.patch("/api/chat/toggle-status",  requireAuth, trackAcceso, chatCtrl.toggleStatus);
 router.get(  "/api/chat/status/:phone",  requireAuth, chatCtrl.getStatus);
 router.post( "/api/chat/send",           requireAuth, chatCtrl.sendMessage);
+router.post( "/api/chat/send-media",     requireAuth, chatCtrl.sendMedia);
 router.get(  "/api/chat/last-messages",   requireAuth, chatCtrl.getLastMessages);
 router.get(  "/api/chat/history/:phone", requireAuth, chatCtrl.getHistory);
 router.post( "/api/chat/request-asesor",  requireAuth, chatCtrl.requestAsesor);
@@ -122,8 +123,6 @@ router.get("/api/usuarios", requireAuth, requireRol("ADMIN"), async (req, res) =
 });
 
 // ── Control global del bot (solo ADMIN) ──────────────────────
-//  GET  /api/admin/bot-status  — consultar estado ON/OFF
-//  PATCH /api/admin/bot-status — cambiar estado
 router.get("/api/admin/bot-status", requireAuth, requireRol("ADMIN"), async (_req, res) => {
   try {
     const { getBotGlobalStatus } = require("./config/redis");
@@ -146,10 +145,7 @@ router.patch("/api/admin/bot-status", requireAuth, requireRol("ADMIN"), async (r
 
     await setBotGlobalStatus(status);
 
-    // Notificar a todos los paneles abiertos en tiempo real
-    try {
-      getIO().to("asesores").emit("bot:status_global", { status });
-    } catch {}
+    try { getIO().to("asesores").emit("bot:status_global", { status }); } catch {}
 
     console.log(`🤖 Bot global → ${status} (por ${req.usuario?.email})`);
     return res.json({ ok: true, status });
