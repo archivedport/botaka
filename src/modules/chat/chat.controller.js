@@ -4,8 +4,9 @@
 //
 //  PATCH /api/chat/toggle-status   — cambiar estado de un chat
 //  GET   /api/chat/status/:phone   — consultar estado actual
-//  POST  /api/chat/send            — asesor envía mensaje vía Meta API
-//  GET   /api/chat/history/:phone  — historial básico desde Redis
+//  POST  /api/chat/send            — asesor envía mensaje de texto
+//  POST  /api/chat/send-media      — asesor envía imagen o PDF
+//  GET   /api/chat/history/:phone  — historial desde BD
 // ============================================================
 
 "use strict";
@@ -19,7 +20,6 @@ const { getIO }     = require("../../socket/socket");
 const { guardarMensaje, obtenerHistorial, obtenerUltimosMensajes } = require("./messages.service");
 
 // ── PATCH /api/chat/toggle-status ───────────────────────────
-//  Body: { phone, action: "TOMAR" | "LIBERAR" }
 async function toggleStatus(req, res) {
   try {
     const { phone, action } = req.body;
@@ -28,57 +28,38 @@ async function toggleStatus(req, res) {
       return res.status(400).json({ error: "phone y action (TOMAR|LIBERAR) son obligatorios." });
     }
 
-      const nuevoEstado = action === "TOMAR" ? "MANUAL" : "BOT";
+    const nuevoEstado = action === "TOMAR" ? "MANUAL" : "BOT";
     const asesorId    = action === "TOMAR" ? req.usuario.id : null;
 
     await setChatStatus(phone, nuevoEstado, asesorId);
 
-    // Si toma control: limpiar solicitud pendiente y enviar mensaje de bienvenida
     if (action === "TOMAR") {
       await clearAsesorRequest(phone);
 
-      // Mensaje automático de bienvenida al paciente
       try {
         const mensajeBienvenida = `¡Hola! 👋 Soy *${req.usuario.nombre}*, asesora de Ser Funcional. Estoy aquí para ayudarte. ¿Cuéntame, en qué te puedo colaborar?`;
         const url = `${meta.baseUrl()}/${meta.phoneId}/messages`;
         await axios.post(url,
-          {
-            messaging_product: "whatsapp",
-            to:   phone,
-            type: "text",
-            text: { body: mensajeBienvenida, preview_url: false },
-          },
+          { messaging_product: "whatsapp", to: phone, type: "text", text: { body: mensajeBienvenida, preview_url: false } },
           { headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" } }
         );
         await guardarMensaje({ phone, de: "ASESOR", texto: mensajeBienvenida, asesorId: req.usuario.id });
         getIO().to(`chat:${phone}`).emit("chat:new_message", {
-          phone,
-          from:         "ASESOR",
-          asesorId:     req.usuario.id,
-          asesorNombre: req.usuario.nombre,
-          mensaje:      mensajeBienvenida,
-          timestamp:    new Date().toISOString(),
+          phone, from: "ASESOR", asesorId: req.usuario.id,
+          asesorNombre: req.usuario.nombre, mensaje: mensajeBienvenida, timestamp: new Date().toISOString(),
         });
         getIO().to("asesores").emit("chat:list_update", {
-          phone,
-          from:      "ASESOR",
-          mensaje:   mensajeBienvenida,
-          timestamp: new Date().toISOString(),
+          phone, from: "ASESOR", mensaje: mensajeBienvenida, timestamp: new Date().toISOString(),
         });
       } catch (e) {
         console.warn("⚠️ No se pudo enviar mensaje de bienvenida:", e.message);
       }
     }
 
-    // Notificar a la sala WebSocket del asesor
-    const io = getIO();
-    io.to(`chat:${phone}`).emit("chat:status_changed", {
-      phone,
-      status:   nuevoEstado,
-      asesorId: asesorId || null,
+    getIO().to(`chat:${phone}`).emit("chat:status_changed", {
+      phone, status: nuevoEstado, asesorId: asesorId || null,
     });
 
-    // Auditoría
     await auditSvc.registrar({
       usuarioId:   req.usuario.id,
       accion:      action === "TOMAR" ? "TOMAR_CONTROL_CHAT" : "LIBERAR_CHAT",
@@ -89,10 +70,8 @@ async function toggleStatus(req, res) {
     });
 
     return res.json({
-      phone,
-      status:   nuevoEstado,
-      asesorId: asesorId || null,
-      message:  action === "TOMAR"
+      phone, status: nuevoEstado, asesorId: asesorId || null,
+      message: action === "TOMAR"
         ? `Chat con ${phone} tomado. El bot está silenciado.`
         : `Chat con ${phone} liberado. El bot retoma el control.`,
     });
@@ -114,37 +93,37 @@ async function getStatus(req, res) {
   }
 }
 
+// ── Helpers: verificar control manual ────────────────────────
+async function verificarControlManual(phone, usuarioId) {
+  let status   = await getChatStatus(phone);
+  let asesorId = await getChatAsesor(phone);
+
+  if (status === "MANUAL" && !asesorId) {
+    const { getBotGlobalStatus } = require("../../config/redis");
+    const botGlobal = await getBotGlobalStatus();
+    if (botGlobal === "OFF") {
+      await setChatStatus(phone, "MANUAL", usuarioId);
+      asesorId = usuarioId;
+      try {
+        getIO().to(`chat:${phone}`).emit("chat:status_changed", {
+          phone, status: "MANUAL", asesorId: usuarioId,
+        });
+      } catch {}
+    }
+  }
+
+  return { status, asesorId };
+}
+
 // ── POST /api/chat/send ──────────────────────────────────────
-//  El asesor envía un mensaje de texto al paciente desde la web.
-//  Body: { phone, mensaje }
 async function sendMessage(req, res) {
   try {
     const { phone, mensaje } = req.body;
-
     if (!phone || !mensaje?.trim()) {
       return res.status(400).json({ error: "phone y mensaje son obligatorios." });
     }
 
-    // Solo permitir si el asesor tiene control MANUAL de ese chat
-    let status   = await getChatStatus(phone);
-    let asesorId = await getChatAsesor(phone);
-
-    // Si bot global está OFF y el chat está en MANUAL sin asesor asignado,
-    // tomar control automáticamente — no obligar al asesor a hacer toggle primero
-    if (status === "MANUAL" && !asesorId) {
-      const { getBotGlobalStatus } = require("../../config/redis");
-      const botGlobal = await getBotGlobalStatus();
-      if (botGlobal === "OFF") {
-        await setChatStatus(phone, "MANUAL", req.usuario.id);
-        asesorId = req.usuario.id;
-        // Notificar al panel del cambio de asesor
-        try {
-          getIO().to(`chat:${phone}`).emit("chat:status_changed", {
-            phone, status: "MANUAL", asesorId: req.usuario.id,
-          });
-        } catch {}
-      }
-    }
+    const { status, asesorId } = await verificarControlManual(phone, req.usuario.id);
 
     if (status !== "MANUAL" || asesorId !== req.usuario.id) {
       return res.status(403).json({
@@ -152,30 +131,17 @@ async function sendMessage(req, res) {
       });
     }
 
-    // Enviar via Meta Cloud API
     const url = `${meta.baseUrl()}/${meta.phoneId}/messages`;
     await axios.post(url,
-      {
-        messaging_product: "whatsapp",
-        to:   phone,
-        type: "text",
-        text: { body: mensaje.trim(), preview_url: false },
-      },
+      { messaging_product: "whatsapp", to: phone, type: "text", text: { body: mensaje.trim(), preview_url: false } },
       { headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" } }
     );
 
-    // Guardar mensaje del asesor en BD
     await guardarMensaje({ phone, de: "ASESOR", texto: mensaje.trim(), asesorId: req.usuario.id });
 
-    // Emitir al WebSocket para que el panel muestre el mensaje enviado
-    const io = getIO();
-    io.to(`chat:${phone}`).emit("chat:message_sent", {
-      phone,
-      from:      "ASESOR",
-      asesorId:  req.usuario.id,
-      asesorNombre: req.usuario.nombre,
-      mensaje:   mensaje.trim(),
-      timestamp: new Date().toISOString(),
+    getIO().to(`chat:${phone}`).emit("chat:message_sent", {
+      phone, from: "ASESOR", asesorId: req.usuario.id,
+      asesorNombre: req.usuario.nombre, mensaje: mensaje.trim(), timestamp: new Date().toISOString(),
     });
 
     return res.json({ ok: true, message: "Mensaje enviado." });
@@ -185,13 +151,96 @@ async function sendMessage(req, res) {
   }
 }
 
+// ── POST /api/chat/send-media ────────────────────────────────
+//  El asesor envía una imagen o PDF al paciente.
+//  Body: { phone, mediaBase64, mimeType, caption? }
+async function sendMedia(req, res) {
+  try {
+    const { phone, mediaBase64, mimeType, caption } = req.body;
+
+    if (!phone || !mediaBase64 || !mimeType) {
+      return res.status(400).json({ error: "phone, mediaBase64 y mimeType son obligatorios." });
+    }
+
+    // Verificar control manual (mismo check que sendMessage)
+    const { status, asesorId } = await verificarControlManual(phone, req.usuario.id);
+    if (status !== "MANUAL" || asesorId !== req.usuario.id) {
+      return res.status(403).json({
+        error: "No tienes control manual de este chat. Usa PATCH /toggle-status primero.",
+      });
+    }
+
+    // 1. Subir a Cloudinary
+    const { subirImagen } = require("../../config/cloudinary");
+    const cloudinaryUrl = await subirImagen(mediaBase64, mimeType);
+    if (!cloudinaryUrl) throw new Error("No se pudo subir el archivo a Cloudinary.");
+
+    // 2. Enviar por WhatsApp según tipo
+    const url = `${meta.baseUrl()}/${meta.phoneId}/messages`;
+    const esPDF = mimeType === "application/pdf";
+
+    const payload = esPDF
+      ? {
+          messaging_product: "whatsapp",
+          to:   phone,
+          type: "document",
+          document: {
+            link:     cloudinaryUrl,
+            filename: "recordatorio.pdf",
+            ...(caption ? { caption } : {}),
+          },
+        }
+      : {
+          messaging_product: "whatsapp",
+          to:   phone,
+          type: "image",
+          image: {
+            link: cloudinaryUrl,
+            ...(caption ? { caption } : {}),
+          },
+        };
+
+    await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${meta.token}`, "Content-Type": "application/json" },
+    });
+
+    // 3. Guardar en BD con mediaUrl
+    const textoMensaje = caption || (esPDF ? "📄 Documento enviado" : "🖼️ Imagen enviada");
+    await guardarMensaje({
+      phone,
+      de:       "ASESOR",
+      texto:    textoMensaje,
+      mediaUrl: cloudinaryUrl,
+      asesorId: req.usuario.id,
+    });
+
+    // 4. Emitir por Socket.io
+    const msgPayload = {
+      phone,
+      from:         "ASESOR",
+      asesorId:     req.usuario.id,
+      asesorNombre: req.usuario.nombre,
+      mensaje:      textoMensaje,
+      mediaUrl:     cloudinaryUrl,
+      timestamp:    new Date().toISOString(),
+    };
+    getIO().to(`chat:${phone}`).emit("chat:new_message", msgPayload);
+    getIO().to("asesores").emit("chat:list_update", msgPayload);
+
+    console.log(`📎 Media enviado a ${phone} — ${mimeType} — ${cloudinaryUrl}`);
+    return res.json({ ok: true, cloudinaryUrl });
+  } catch (err) {
+    console.error("Error sendMedia:", err.response?.data || err.message);
+    return res.status(500).json({ error: err.message || "No se pudo enviar el archivo." });
+  }
+}
+
 // ── POST /api/chat/request-asesor ───────────────────────────
 async function requestAsesor(req, res) {
   try {
     const { phone, motivo } = req.body;
     if (!phone) return res.status(400).json({ error: "phone requerido." });
 
-    // Persistir en Redis para que sobreviva recargas
     await setAsesorRequest(phone, motivo || "");
 
     const paciente = await require("../../config/database").paciente
@@ -199,12 +248,9 @@ async function requestAsesor(req, res) {
       .catch(() => null);
 
     try {
-      const { getIO } = require("../../socket/socket");
       getIO().to("asesores").emit("chat:asesor_solicitado", {
-        phone,
-        nombre: paciente?.nombre || null,
-        motivo: motivo || null,
-        timestamp: new Date().toISOString(),
+        phone, nombre: paciente?.nombre || null,
+        motivo: motivo || null, timestamp: new Date().toISOString(),
       });
     } catch {}
 
@@ -214,7 +260,7 @@ async function requestAsesor(req, res) {
   }
 }
 
-// ── GET /api/chat/pending-asesor — solicitudes pendientes ─────
+// ── GET /api/chat/pending-asesor ─────────────────────────────
 async function getPendingAsesor(req, res) {
   try {
     const pendientes = await getPendingAsesorRequests();
@@ -224,25 +270,16 @@ async function getPendingAsesor(req, res) {
   }
 }
 
-// ── POST /api/chat/bot-message (interno, llamado desde bot.js) ─
+// ── POST /api/chat/bot-message ───────────────────────────────
 async function saveBotMessage(req, res) {
   try {
     const { phone, texto } = req.body;
     if (!phone || !texto) return res.status(400).json({ error: "phone y texto requeridos." });
     await guardarMensaje({ phone, de: "BOT", texto });
 
-    // Emitir al panel en tiempo real
     try {
-      const { getIO } = require("../../socket/socket");
-      const payload = {
-        phone,
-        from:      "BOT",
-        mensaje:   texto,
-        timestamp: new Date().toISOString(),
-      };
-      // Para quien tiene el chat abierto → dibuja la burbuja
+      const payload = { phone, from: "BOT", mensaje: texto, timestamp: new Date().toISOString() };
       getIO().to(`chat:${phone}`).emit("chat:new_message", payload);
-      // Para todos los asesores → solo actualiza la lista
       getIO().to("asesores").emit("chat:list_update", payload);
     } catch {}
 
@@ -252,7 +289,7 @@ async function saveBotMessage(req, res) {
   }
 }
 
-// ── GET /api/chat/last-messages?phones=573...,573... ──────────
+// ── GET /api/chat/last-messages ──────────────────────────────
 async function getLastMessages(req, res) {
   try {
     const phones = (req.query.phones || '').split(',').filter(Boolean);
@@ -279,4 +316,8 @@ async function getHistory(req, res) {
   }
 }
 
-module.exports = { toggleStatus, getStatus, sendMessage, getHistory, saveBotMessage, getLastMessages, requestAsesor, getPendingAsesor };
+module.exports = {
+  toggleStatus, getStatus, sendMessage, sendMedia,
+  getHistory, saveBotMessage, getLastMessages,
+  requestAsesor, getPendingAsesor,
+};
