@@ -132,7 +132,6 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
                 validadoEn:      true,
               },
             },
-            },
           },
         },
         sede:   { select: { id: true, nombre: true, slug: true, direccion: true } },
