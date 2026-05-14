@@ -180,6 +180,7 @@ model LogIA {
   id              String           @id @default(cuid())
   pacienteId      String?
   asesorId        String?
+  citaId          String?          // Cita a la que pertenece este documento
   mediaId         String           // ID de Meta
   tipoDocumento   TipoDocumentoIA
   resultadoRaw    Json             // Respuesta cruda de Gemini
@@ -193,6 +194,7 @@ model LogIA {
   paciente        Paciente?        @relation(fields: [pacienteId], references: [id])
   asesor          Usuario?         @relation(fields: [asesorId], references: [id])
 
+  @@index([citaId])
   @@map("logs_ia")
 }
 
