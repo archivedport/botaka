@@ -175,9 +175,10 @@ async function sendMedia(req, res) {
       } catch {}
     }
 
-    // 1. Subir a Cloudinary
+    // 1. Subir a Cloudinary — subirImagen retorna { url, publicId }
     const { subirImagen } = require("../../config/cloudinary");
-    const cloudinaryUrl = await subirImagen(mediaBase64, mimeType);
+    const cloudinaryResult = await subirImagen(mediaBase64, mimeType, { folder: "recordatorios" });
+    const cloudinaryUrl = cloudinaryResult?.url;
     if (!cloudinaryUrl) throw new Error("No se pudo subir el archivo a Cloudinary.");
 
     // 2. Enviar por WhatsApp según tipo
