@@ -162,12 +162,17 @@ async function sendMedia(req, res) {
       return res.status(400).json({ error: "phone, mediaBase64 y mimeType son obligatorios." });
     }
 
-    // Verificar control manual (mismo check que sendMessage)
-    const { status, asesorId } = await verificarControlManual(phone, req.usuario.id);
+    // Para recordatorios, tomar control automáticamente si no lo tiene.
+    // Es una acción explícita del asesor — no requiere toggle previo.
+    let { status, asesorId } = await verificarControlManual(phone, req.usuario.id);
     if (status !== "MANUAL" || asesorId !== req.usuario.id) {
-      return res.status(403).json({
-        error: "No tienes control manual de este chat. Usa PATCH /toggle-status primero.",
-      });
+      await setChatStatus(phone, "MANUAL", req.usuario.id);
+      asesorId = req.usuario.id;
+      try {
+        getIO().to(`chat:${phone}`).emit("chat:status_changed", {
+          phone, status: "MANUAL", asesorId: req.usuario.id,
+        });
+      } catch {}
     }
 
     // 1. Subir a Cloudinary
@@ -226,6 +231,14 @@ async function sendMedia(req, res) {
     };
     getIO().to(`chat:${phone}`).emit("chat:new_message", msgPayload);
     getIO().to("asesores").emit("chat:list_update", msgPayload);
+
+    // Liberar el chat de vuelta al bot después de enviar el recordatorio
+    await setChatStatus(phone, "BOT", null);
+    try {
+      getIO().to(`chat:${phone}`).emit("chat:status_changed", {
+        phone, status: "BOT", asesorId: null,
+      });
+    } catch {}
 
     console.log(`📎 Media enviado a ${phone} — ${mimeType} — ${cloudinaryUrl}`);
     return res.json({ ok: true, cloudinaryUrl });
