@@ -118,12 +118,12 @@ async function getSolicitudes({ page = 1, limit = 50 } = {}) {
             email:       true,
             // Documentos IA vinculados al paciente
             logsIA: {
+              where:   { citaId: { not: null } },
               orderBy: { createdAt: "desc" },
-              take:    5,    // máx 5 docs más recientes
               select: {
                 id:              true,
                 tipoDocumento:   true,
-                resultadoRaw:    true,  // contiene cloudinaryUrl
+                resultadoRaw:    true,
                 resultadoParsed: true,
                 confianza:       true,
                 createdAt:       true,
