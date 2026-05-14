@@ -191,7 +191,7 @@ async function createAppointment(data) {
   // Buscamos los LogIA del paciente creados en las últimas 4 horas y los vinculamos.
   if (cita.pacienteId) {
     try {
-      const ventana = new Date(inicio.getTime() - 4 * 60 * 60 * 1000);
+      const ventana = new Date(Date.now() - 4 * 60 * 60 * 1000);
       await prisma.logIA.updateMany({
         where: {
           pacienteId: cita.pacienteId,
